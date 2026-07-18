@@ -1,51 +1,23 @@
-import { Slot, useRouter, useSegments } from "expo-router";
-import { useEffect } from "react";
-import { ActivityIndicator, View } from 'react-native';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { AuthProvider, useAuth } from "../context/Authcontext";
+import { Stack } from 'expo-router';
+import { ClerkProvider, ClerkLoaded } from '@clerk/expo';
+import { tokenCache } from '../utils/cache'; // Import your secure cache adapter
 
-import "../../global.css";
+const publishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY;
 
-
-
-function Navigation() {
-
-   const {user, loading} = useAuth();
-  const segments = useSegments();
-  const router = useRouter();
-
-
-  useEffect(()=>{
-    if(loading) return;
-    const inAppGroups = segments[0] === "(app)";
-    if(user && !inAppGroups) {
-      router.replace("/(app)/(tabs)");
-    } else if(!user && inAppGroups) {
-      router.replace("/(auth)/sign-in");
-    }
-    else {router.replace("/") }
-  }, [user, loading, segments]);
-
-  if(loading) {
-    return (
-      <View style={{flex:1, justifyContent:'center', alignItems:'center'}}>
-        <ActivityIndicator size="large" color="#0000ff" />
-      </View>
-    );
-  }
-  
-  return <Slot />;
+if (!publishableKey) {
+  throw new Error('Missing EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY environment variable.');
 }
 
-
 export default function RootLayout() {
-  
- 
   return (
-    <SafeAreaProvider>
-      <AuthProvider>
-        <Navigation />
-      </AuthProvider>
-    </SafeAreaProvider>
+    <ClerkProvider tokenCache={tokenCache} publishableKey={publishableKey}>
+      <ClerkLoaded>
+        <Stack screenOptions={{ headerShown: false }}>
+          <Stack.Screen name='(welcome)' />
+          <Stack.Screen name="(auth)" />
+          <Stack.Screen name="(app)/(tabs)" />
+        </Stack>
+      </ClerkLoaded>
+    </ClerkProvider>
   );
 }
