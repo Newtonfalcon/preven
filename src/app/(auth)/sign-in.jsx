@@ -1,19 +1,12 @@
 import { Fraunces_500Medium } from '@expo-google-fonts/fraunces';
 import { Manrope_500Medium, Manrope_700Bold } from '@expo-google-fonts/manrope';
 import { Feather } from '@expo/vector-icons';
+import { useSignIn, useSSO } from '@clerk/expo';
 import { makeRedirectUri } from 'expo-auth-session';
-import * as Google from 'expo-auth-session/providers/google';
-import Constants from 'expo-constants';
 import { useFonts } from 'expo-font';
 import { useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
-import {
-  GoogleAuthProvider,
-  sendPasswordResetEmail,
-  signInWithCredential,
-  signInWithEmailAndPassword,
-} from 'firebase/auth';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -27,7 +20,6 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
-import { auth } from '../../config/firebase';
 
 // Colors match the welcome screen (src/app/index.jsx)
 const C = {
@@ -42,30 +34,24 @@ const C = {
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-const AUTH_ERROR_MESSAGES = {
-  'auth/invalid-email': 'That email address doesn’t look right.',
-  'auth/user-not-found': 'We couldn’t find an account with that email.',
-  'auth/wrong-password': 'Incorrect email or password. Please try again.',
-  'auth/invalid-credential': 'Incorrect email or password. Please try again.',
-  'auth/too-many-requests': 'Too many attempts. Please wait a moment and try again.',
-  'auth/network-request-failed': 'Network error. Check your connection and try again.',
-  'auth/user-disabled': 'This account has been disabled. Contact support for help.',
-};
-
-const expoExtra = Constants?.expoConfig?.extra || {};
-const GOOGLE_WEB_CLIENT_ID =
-  expoExtra.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
-const GOOGLE_IOS_CLIENT_ID =
-  expoExtra.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID || process.env.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID;
-const GOOGLE_ANDROID_CLIENT_ID =
-  expoExtra.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID || process.env.EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID;
-const GOOGLE_CLIENT_ID = GOOGLE_WEB_CLIENT_ID || GOOGLE_IOS_CLIENT_ID || GOOGLE_ANDROID_CLIENT_ID;
-const GOOGLE_REDIRECT_URI = makeRedirectUri({ useProxy: true });
-WebBrowser.maybeCompleteAuthSession();
-
-function getErrorMessage(error) {
-  return AUTH_ERROR_MESSAGES[error?.code] || 'Something went wrong. Please try again.';
+// Extracts a friendly message out of a Clerk error object
+function getClerkErrorMessage(error) {
+  const first = error?.errors?.[0];
+  return first?.longMessage || first?.message || 'Something went wrong. Please try again.';
 }
+
+// Preloads the browser for Android devices to reduce SSO load time.
+// See: https://docs.expo.dev/guides/authentication/#improving-user-experience
+function useWarmUpBrowser() {
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    void WebBrowser.warmUpAsync();
+    return () => {
+      void WebBrowser.coolDownAsync();
+    };
+  }, []);
+}
+WebBrowser.maybeCompleteAuthSession();
 
 function GoogleGlyph() {
   return (
@@ -92,33 +78,46 @@ function GoogleGlyph() {
 
 export default function SignIn() {
   const router = useRouter();
+  useWarmUpBrowser();
   const [fontsLoaded] = useFonts({ Fraunces_500Medium, Manrope_500Medium, Manrope_700Bold });
   const displayFont = fontsLoaded ? 'font-[Fraunces_500Medium]' : 'font-serif';
   const bodyFont = fontsLoaded ? 'font-[Manrope_500Medium]' : '';
   const boldFont = fontsLoaded ? 'font-[Manrope_700Bold]' : 'font-bold';
 
+  const { signIn, errors: signInErrors, fetchStatus } = useSignIn();
+  const { startSSOFlow } = useSSO();
+
+  // 'signin' -> main form, 'verify' -> client-trust code step,
+  // 'resetEmail' / 'resetCode' / 'resetPassword' -> forgot-password sub-flow
+  const [mode, setMode] = useState('signin');
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [code, setCode] = useState('');
+  const [newPassword, setNewPassword] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
   const [formError, setFormError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [googleSubmitting, setGoogleSubmitting] = useState(false);
-  const [resetSending, setResetSending] = useState(false);
 
-  const [request, response, promptAsync] = Google.useIdTokenAuthRequest(
-    {
-      clientId: GOOGLE_CLIENT_ID,
-      webClientId: GOOGLE_WEB_CLIENT_ID,
-      iosClientId: GOOGLE_IOS_CLIENT_ID,
-      androidClientId: GOOGLE_ANDROID_CLIENT_ID,
-      redirectUri: GOOGLE_REDIRECT_URI,
-      scopes: ['profile', 'email'],
-    },
-    { useProxy: true }
-  );
+  const busy = submitting || googleSubmitting || fetchStatus === 'fetching';
 
-  const busy = submitting || googleSubmitting;
+  const finalizeAndEnter = async () => {
+    await signIn.finalize({
+      navigate: ({ session }) => {
+        if (session?.currentTask) {
+          // App doesn't have custom UI for pending session tasks yet.
+          return;
+        }
+        router.replace('/(app)/(tabs)');
+      },
+    });
+  };
+
+  const clearFieldError = (field) => {
+    setFieldErrors((prev) => (prev[field] ? { ...prev, [field]: undefined } : prev));
+  };
 
   const handleSignIn = async () => {
     setFormError('');
@@ -131,10 +130,50 @@ export default function SignIn() {
 
     setSubmitting(true);
     try {
-      await signInWithEmailAndPassword(auth, email.trim(), password);
-      // Root layout redirects into the app once the auth state updates.
+      const { error } = await signIn.password({ emailAddress: email.trim(), password });
+      if (error) {
+        setFormError(getClerkErrorMessage(error));
+        return;
+      }
+
+      if (signIn.status === 'complete') {
+        await finalizeAndEnter();
+      } else if (signIn.status === 'needs_second_factor') {
+        setFormError('This account requires additional verification, which isn’t supported here yet.');
+      } else if (signIn.status === 'needs_client_trust') {
+        const emailCodeFactor = signIn.supportedSecondFactors?.find((f) => f.strategy === 'email_code');
+        if (emailCodeFactor) {
+          await signIn.mfa.sendEmailCode();
+          setMode('verify');
+        } else {
+          setFormError('This device needs to be verified, but no verification method is available.');
+        }
+      } else {
+        setFormError('Sign-in could not be completed. Please try again.');
+      }
     } catch (error) {
-      setFormError(getErrorMessage(error));
+      setFormError(getClerkErrorMessage(error));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleVerifyClientTrust = async () => {
+    setFormError('');
+    setSubmitting(true);
+    try {
+      const { error } = await signIn.mfa.verifyEmailCode({ code });
+      if (error) {
+        setFormError(getClerkErrorMessage(error));
+        return;
+      }
+      if (signIn.status === 'complete') {
+        await finalizeAndEnter();
+      } else {
+        setFormError('Verification could not be completed. Please try again.');
+      }
+    } catch (error) {
+      setFormError(getClerkErrorMessage(error));
     } finally {
       setSubmitting(false);
     }
@@ -144,49 +183,331 @@ export default function SignIn() {
     setFormError('');
     setGoogleSubmitting(true);
     try {
-      if (!GOOGLE_CLIENT_ID) {
-        setFormError(
-          'Google sign-in is not configured. Please set EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID, EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID, or EXPO_PUBLIC_GOOGLE_ANDROID_CLIENT_ID.'
-        );
-        return;
+      const { createdSessionId, setActive } = await startSSOFlow({
+        strategy: 'oauth_google',
+        redirectUrl: makeRedirectUri(),
+      });
+      if (createdSessionId && setActive) {
+        await setActive({ session: createdSessionId });
+        router.replace('/(app)/(tabs)');
       }
-      if (!request) {
-        setFormError('Google sign-in is not ready yet.');
-        return;
-      }
-      const result = await promptAsync({ useProxy: true });
-      if (result.type !== 'success') return;
-
-      const idToken = result.params.id_token || result.authentication?.idToken;
-      if (!idToken) {
-        throw new Error('Google Sign-In did not return an ID token.');
-      }
-
-      const credential = GoogleAuthProvider.credential(idToken);
-      await signInWithCredential(auth, credential);
     } catch (error) {
-      setFormError(getErrorMessage(error));
+      setFormError(getClerkErrorMessage(error));
     } finally {
       setGoogleSubmitting(false);
     }
   };
 
-  const handleForgotPassword = async () => {
+  // --- Forgot password sub-flow ---
+
+  const handleSendResetCode = async () => {
+    setFormError('');
     if (!EMAIL_RE.test(email.trim())) {
       setFieldErrors((prev) => ({ ...prev, email: 'Enter your email above first.' }));
       return;
     }
-    setResetSending(true);
+    setSubmitting(true);
     try {
-      await sendPasswordResetEmail(auth, email.trim());
-      Alert.alert('Check your inbox', `We sent a password reset link to ${email.trim()}.`);
+      const { error: createError } = await signIn.create({ identifier: email.trim() });
+      if (createError) {
+        setFormError(getClerkErrorMessage(createError));
+        return;
+      }
+      const { error: sendError } = await signIn.resetPasswordEmailCode.sendCode();
+      if (sendError) {
+        setFormError(getClerkErrorMessage(sendError));
+        return;
+      }
+      setMode('resetCode');
     } catch (error) {
-      setFormError(getErrorMessage(error));
+      setFormError(getClerkErrorMessage(error));
     } finally {
-      setResetSending(false);
+      setSubmitting(false);
     }
   };
 
+  const handleVerifyResetCode = async () => {
+    setFormError('');
+    setSubmitting(true);
+    try {
+      const { error } = await signIn.resetPasswordEmailCode.verifyCode({ code });
+      if (error) {
+        setFormError(getClerkErrorMessage(error));
+        return;
+      }
+      setMode('resetPassword');
+    } catch (error) {
+      setFormError(getClerkErrorMessage(error));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleSubmitNewPassword = async () => {
+    setFormError('');
+    if (!newPassword || newPassword.length < 6) {
+      setFieldErrors((prev) => ({ ...prev, newPassword: 'Use at least 6 characters.' }));
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const { error } = await signIn.resetPasswordEmailCode.submitPassword({
+        password: newPassword,
+        signOutOfOtherSessions: true,
+      });
+      if (error) {
+        setFormError(getClerkErrorMessage(error));
+        return;
+      }
+      if (signIn.status === 'complete') {
+        Alert.alert('Password updated', 'Your password has been reset.');
+        await finalizeAndEnter();
+      } else {
+        setFormError('Password reset could not be completed. Please try again.');
+      }
+    } catch (error) {
+      setFormError(getClerkErrorMessage(error));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const resetToSignIn = () => {
+    setMode('signin');
+    setCode('');
+    setNewPassword('');
+    setFormError('');
+    setFieldErrors({});
+  };
+
+  // --- Verify (client trust) screen ---
+  if (mode === 'verify') {
+    return (
+      <View className="flex-1 bg-black">
+        <SafeAreaView className="flex-1">
+          <View className="flex-1 px-8 pb-8 pt-6">
+            <Text className={`${displayFont} text-3xl text-[#F5F3EF]`}>Verify it’s you</Text>
+            <Text className={`${bodyFont} mt-2 text-base text-[#8B93A0]`}>
+              We sent a verification code to {email.trim()}.
+            </Text>
+
+            {formError ? (
+              <View className="mt-4 rounded-xl px-4 py-3" style={{ backgroundColor: C.dangerBg }}>
+                <Text className={`${bodyFont} text-sm text-[#FF6B6B]`}>{formError}</Text>
+              </View>
+            ) : null}
+
+            <View className="mt-6 mb-4">
+              <Text className={`${bodyFont} mb-2 text-xs text-[#8B93A0]`}>Verification code</Text>
+              <View
+                className="flex-row items-center rounded-2xl px-4"
+                style={{ borderWidth: 1, borderColor: C.border, backgroundColor: C.surface }}
+              >
+                <TextInput
+                  value={code}
+                  onChangeText={setCode}
+                  placeholder="123456"
+                  placeholderTextColor={C.placeholder}
+                  keyboardType="number-pad"
+                  editable={!busy}
+                  className={`${bodyFont} flex-1 py-4 text-base`}
+                  style={{ color: C.text }}
+                />
+              </View>
+            </View>
+
+            <Pressable
+              onPress={handleVerifyClientTrust}
+              disabled={!code || busy}
+              className={`w-full items-center rounded-2xl bg-white py-4 active:opacity-80 ${(!code || busy) ? 'opacity-50' : ''}`}
+            >
+              {submitting ? <ActivityIndicator color="#000000" /> : <Text className={`${boldFont} text-base text-black`}>Verify</Text>}
+            </Pressable>
+
+            <Pressable onPress={() => signIn.mfa.sendEmailCode()} className="mt-4 items-center" hitSlop={8}>
+              <Text className={`${bodyFont} text-sm text-[#8B93A0]`}>I need a new code</Text>
+            </Pressable>
+            <Pressable onPress={resetToSignIn} className="mt-2 items-center" hitSlop={8}>
+              <Text className={`${bodyFont} text-sm text-[#8B93A0]`}>Start over</Text>
+            </Pressable>
+          </View>
+        </SafeAreaView>
+      </View>
+    );
+  }
+
+  // --- Forgot password: send code ---
+  if (mode === 'resetEmail') {
+    return (
+      <View className="flex-1 bg-black">
+        <SafeAreaView className="flex-1">
+          <View className="flex-1 px-8 pb-8 pt-6">
+            <Text className={`${displayFont} text-3xl text-[#F5F3EF]`}>Reset password</Text>
+            <Text className={`${bodyFont} mt-2 text-base text-[#8B93A0]`}>
+              Enter your email and we’ll send you a reset code.
+            </Text>
+
+            {formError ? (
+              <View className="mt-4 rounded-xl px-4 py-3" style={{ backgroundColor: C.dangerBg }}>
+                <Text className={`${bodyFont} text-sm text-[#FF6B6B]`}>{formError}</Text>
+              </View>
+            ) : null}
+
+            <View className="mt-6 mb-4">
+              <Text className={`${bodyFont} mb-2 text-xs text-[#8B93A0]`}>Email</Text>
+              <View
+                className="flex-row items-center rounded-2xl px-4"
+                style={{ borderWidth: 1, borderColor: fieldErrors.email ? C.danger : C.border, backgroundColor: C.surface }}
+              >
+                <TextInput
+                  value={email}
+                  onChangeText={(text) => {
+                    setEmail(text);
+                    clearFieldError('email');
+                  }}
+                  placeholder="you@example.com"
+                  placeholderTextColor={C.placeholder}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  editable={!busy}
+                  className={`${bodyFont} flex-1 py-4 text-base`}
+                  style={{ color: C.text }}
+                />
+              </View>
+              {fieldErrors.email ? (
+                <Text className={`${bodyFont} mt-1.5 text-xs text-[#FF6B6B]`}>{fieldErrors.email}</Text>
+              ) : null}
+            </View>
+
+            <Pressable
+              onPress={handleSendResetCode}
+              disabled={busy}
+              className={`w-full items-center rounded-2xl bg-white py-4 active:opacity-80 ${busy ? 'opacity-50' : ''}`}
+            >
+              {submitting ? <ActivityIndicator color="#000000" /> : <Text className={`${boldFont} text-base text-black`}>Send reset code</Text>}
+            </Pressable>
+
+            <Pressable onPress={resetToSignIn} className="mt-4 items-center" hitSlop={8}>
+              <Text className={`${bodyFont} text-sm text-[#8B93A0]`}>Back to sign in</Text>
+            </Pressable>
+          </View>
+        </SafeAreaView>
+      </View>
+    );
+  }
+
+  // --- Forgot password: enter code ---
+  if (mode === 'resetCode') {
+    return (
+      <View className="flex-1 bg-black">
+        <SafeAreaView className="flex-1">
+          <View className="flex-1 px-8 pb-8 pt-6">
+            <Text className={`${displayFont} text-3xl text-[#F5F3EF]`}>Enter the code</Text>
+            <Text className={`${bodyFont} mt-2 text-base text-[#8B93A0]`}>
+              We sent a reset code to {email.trim()}.
+            </Text>
+
+            {formError ? (
+              <View className="mt-4 rounded-xl px-4 py-3" style={{ backgroundColor: C.dangerBg }}>
+                <Text className={`${bodyFont} text-sm text-[#FF6B6B]`}>{formError}</Text>
+              </View>
+            ) : null}
+
+            <View className="mt-6 mb-4">
+              <Text className={`${bodyFont} mb-2 text-xs text-[#8B93A0]`}>Verification code</Text>
+              <View
+                className="flex-row items-center rounded-2xl px-4"
+                style={{ borderWidth: 1, borderColor: C.border, backgroundColor: C.surface }}
+              >
+                <TextInput
+                  value={code}
+                  onChangeText={setCode}
+                  placeholder="123456"
+                  placeholderTextColor={C.placeholder}
+                  keyboardType="number-pad"
+                  editable={!busy}
+                  className={`${bodyFont} flex-1 py-4 text-base`}
+                  style={{ color: C.text }}
+                />
+              </View>
+            </View>
+
+            <Pressable
+              onPress={handleVerifyResetCode}
+              disabled={!code || busy}
+              className={`w-full items-center rounded-2xl bg-white py-4 active:opacity-80 ${(!code || busy) ? 'opacity-50' : ''}`}
+            >
+              {submitting ? <ActivityIndicator color="#000000" /> : <Text className={`${boldFont} text-base text-black`}>Verify code</Text>}
+            </Pressable>
+
+            <Pressable onPress={resetToSignIn} className="mt-4 items-center" hitSlop={8}>
+              <Text className={`${bodyFont} text-sm text-[#8B93A0]`}>Back to sign in</Text>
+            </Pressable>
+          </View>
+        </SafeAreaView>
+      </View>
+    );
+  }
+
+  // --- Forgot password: set new password ---
+  if (mode === 'resetPassword') {
+    return (
+      <View className="flex-1 bg-black">
+        <SafeAreaView className="flex-1">
+          <View className="flex-1 px-8 pb-8 pt-6">
+            <Text className={`${displayFont} text-3xl text-[#F5F3EF]`}>New password</Text>
+            <Text className={`${bodyFont} mt-2 text-base text-[#8B93A0]`}>
+              Choose a new password for your account.
+            </Text>
+
+            {formError ? (
+              <View className="mt-4 rounded-xl px-4 py-3" style={{ backgroundColor: C.dangerBg }}>
+                <Text className={`${bodyFont} text-sm text-[#FF6B6B]`}>{formError}</Text>
+              </View>
+            ) : null}
+
+            <View className="mt-6 mb-4">
+              <Text className={`${bodyFont} mb-2 text-xs text-[#8B93A0]`}>New password</Text>
+              <View
+                className="flex-row items-center rounded-2xl px-4"
+                style={{ borderWidth: 1, borderColor: fieldErrors.newPassword ? C.danger : C.border, backgroundColor: C.surface }}
+              >
+                <TextInput
+                  value={newPassword}
+                  onChangeText={(text) => {
+                    setNewPassword(text);
+                    clearFieldError('newPassword');
+                  }}
+                  placeholder="At least 6 characters"
+                  placeholderTextColor={C.placeholder}
+                  secureTextEntry
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  editable={!busy}
+                  className={`${bodyFont} flex-1 py-4 text-base`}
+                  style={{ color: C.text }}
+                />
+              </View>
+              {fieldErrors.newPassword ? (
+                <Text className={`${bodyFont} mt-1.5 text-xs text-[#FF6B6B]`}>{fieldErrors.newPassword}</Text>
+              ) : null}
+            </View>
+
+            <Pressable
+              onPress={handleSubmitNewPassword}
+              disabled={busy}
+              className={`w-full items-center rounded-2xl bg-white py-4 active:opacity-80 ${busy ? 'opacity-50' : ''}`}
+            >
+              {submitting ? <ActivityIndicator color="#000000" /> : <Text className={`${boldFont} text-base text-black`}>Set new password</Text>}
+            </Pressable>
+          </View>
+        </SafeAreaView>
+      </View>
+    );
+  }
+
+  // --- Main sign-in screen ---
   return (
     <View className="flex-1 bg-black">
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} className="flex-1">
@@ -213,12 +534,8 @@ export default function SignIn() {
               {/* Google sign-in */}
               <Pressable
                 onPress={handleGoogleSignIn}
-                disabled={googleSubmitting || !request || (!GOOGLE_WEB_CLIENT_ID && !GOOGLE_IOS_CLIENT_ID && !GOOGLE_ANDROID_CLIENT_ID)}
-                className={`w-full flex-row items-center justify-center rounded-2xl py-4 active:opacity-70 ${
-                  googleSubmitting || (!GOOGLE_WEB_CLIENT_ID && !GOOGLE_IOS_CLIENT_ID && !GOOGLE_ANDROID_CLIENT_ID)
-                    ? 'opacity-60'
-                    : ''
-                }`}
+                disabled={googleSubmitting || submitting}
+                className={`w-full flex-row items-center justify-center rounded-2xl py-4 active:opacity-70 ${googleSubmitting ? 'opacity-60' : ''}`}
                 style={{ borderWidth: 1, borderColor: C.border, backgroundColor: C.surface }}
               >
                 {googleSubmitting ? (
@@ -249,7 +566,7 @@ export default function SignIn() {
                   className="flex-row items-center rounded-2xl px-4"
                   style={{
                     borderWidth: 1,
-                    borderColor: fieldErrors.email ? C.danger : C.border,
+                    borderColor: fieldErrors.email || signInErrors?.fields?.identifier ? C.danger : C.border,
                     backgroundColor: C.surface,
                   }}
                 >
@@ -257,7 +574,7 @@ export default function SignIn() {
                     value={email}
                     onChangeText={(text) => {
                       setEmail(text);
-                      if (fieldErrors.email) setFieldErrors((prev) => ({ ...prev, email: undefined }));
+                      clearFieldError('email');
                     }}
                     placeholder="you@example.com"
                     placeholderTextColor={C.placeholder}
@@ -291,8 +608,7 @@ export default function SignIn() {
                     value={password}
                     onChangeText={(text) => {
                       setPassword(text);
-                      if (fieldErrors.password)
-                        setFieldErrors((prev) => ({ ...prev, password: undefined }));
+                      clearFieldError('password');
                     }}
                     placeholder="Enter your password"
                     placeholderTextColor={C.placeholder}
@@ -321,23 +637,22 @@ export default function SignIn() {
               </View>
 
               <Pressable
-                onPress={handleForgotPassword}
-                disabled={resetSending || busy}
+                onPress={() => {
+                  setFormError('');
+                  setMode('resetEmail');
+                }}
+                disabled={busy}
                 className="mb-6 items-end"
                 hitSlop={8}
               >
-                <Text className={`${bodyFont} text-sm text-[#8B93A0]`}>
-                  {resetSending ? 'Sending reset link…' : 'Forgot password?'}
-                </Text>
+                <Text className={`${bodyFont} text-sm text-[#8B93A0]`}>Forgot password?</Text>
               </Pressable>
 
               {/* Sign in button */}
               <Pressable
                 onPress={handleSignIn}
-                disabled={submitting || googleSubmitting}
-                className={`w-full items-center rounded-2xl bg-white py-4 active:opacity-80 ${
-                  submitting || googleSubmitting ? 'opacity-50' : ''
-                }`}
+                disabled={busy}
+                className={`w-full items-center rounded-2xl bg-white py-4 active:opacity-80 ${busy ? 'opacity-50' : ''}`}
               >
                 {submitting ? (
                   <ActivityIndicator color="#000000" />
@@ -347,7 +662,7 @@ export default function SignIn() {
               </Pressable>
 
               <View className="mt-8 flex-row justify-center">
-                <Text className={`${bodyFont} text-sm text-[#8B93A0]`}>Don’t have an account? </Text>
+                <Text className={`${bodyFont} text-sm text-[#8B93A0]`}>Don't have an account? </Text>
                 <Pressable onPress={() => router.replace('/(auth)/sign-up')} hitSlop={8}>
                   <Text className={`${boldFont} text-sm text-[#F5F3EF]`}>Create one</Text>
                 </Pressable>
