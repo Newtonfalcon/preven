@@ -1,4 +1,3 @@
-
 import * as Securestore from 'expo-secure-store'
 import { Platform } from 'react-native'
 
@@ -6,13 +5,13 @@ const createTokenCache = () => {
   return {
     async getToken(key) {
       try {
-        const item = Securestore.getItemAsync(key)
+        const item = await Securestore.getItemAsync(key)
         return item
 
       } catch (err) {
         console.error('SecureStore get item error: ', err);
-                await Securestore.deleteItemAsync(key);
-                return null;
+        await Securestore.deleteItemAsync(key);
+        return null;
 
       }
 

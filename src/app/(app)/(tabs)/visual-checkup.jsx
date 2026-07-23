@@ -1,164 +1,171 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useState } from 'react';
-import { FlatList, Image, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { useRouter } from 'expo-router';
+import { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, RefreshControl, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useApi } from '../../../context/ApiContext';
 
-export default function VisualCheckupScreen() {
-  const [selectedZone, setSelectedZone] = useState('All');
+// Maps the backend's free-text trend status into a consistent badge color.
+function trendStyles(status = '') {
+  const normalized = status.toLowerCase();
+  if (normalized.includes('flag')) {
+    return { bg: 'bg-rose-50', border: 'border-rose-100', text: 'text-rose-700', dot: '#E11D48' };
+  }
+  if (normalized.includes('shift') || normalized.includes('minor')) {
+    return { bg: 'bg-amber-50', border: 'border-amber-100', text: 'text-amber-700', dot: '#D97706' };
+  }
+  if (normalized.includes('stable')) {
+    return { bg: 'bg-emerald-50', border: 'border-emerald-100', text: 'text-emerald-700', dot: '#10B981' };
+  }
+  return { bg: 'bg-slate-100', border: 'border-slate-200', text: 'text-slate-700', dot: '#64748B' };
+}
 
-  const metricZones = ['All', 'Left Arm', 'Right Arm', 'Torso', 'Back', 'Neck'];
+export default function SummaryScreen() {
+  const router = useRouter();
+  const api = useApi();
+  const insets = useSafeAreaInsets();
 
-  // Local mock dataset representing chronologically tracked assets
-  const trackingHistory = [
-    {
-      id: '1',
-      zone: 'Left Arm',
-      date: 'July 10, 2026',
-      status: 'Stable',
-      statusColor: '#10B981',
-      image: 'https://images.unsplash.com/photo-1512438248247-f0f2a5a8b7f0?q=80&w=200&auto=format&fit=crop',
-      metrics: 'Symmetry: 98% | Diameter: 3.2mm',
-    },
-    {
-      id: '2',
-      zone: 'Torso',
-      date: 'July 02, 2026',
-      status: 'Review Needed',
-      statusColor: '#F59E0B',
-      image: 'https://images.unsplash.com/photo-1512438248247-f0f2a5a8b7f0?q=80&w=200&auto=format&fit=crop',
-      metrics: 'Symmetry: 89% | Diameter: 4.5mm',
-    },
-    {
-      id: '3',
-      zone: 'Back',
-      date: 'June 24, 2026',
-      status: 'Stable',
-      statusColor: '#10B981',
-      image: 'https://images.unsplash.com/photo-1512438248247-f0f2a5a8b7f0?q=80&w=200&auto=format&fit=crop',
-      metrics: 'Symmetry: 96% | Diameter: 2.1mm',
-    },
-  ];
+  const [report, setReport] = useState(null);
+  const [isCached, setIsCached] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  // 'ok' | 'empty' | 'error'
+  const [status, setStatus] = useState('ok');
+  const [errorMessage, setErrorMessage] = useState('');
 
-  const filteredHistory = selectedZone === 'All' 
-    ? trackingHistory 
-    : trackingHistory.filter(item => item.zone === selectedZone);
+  const loadSummary = useCallback(async () => {
+    try {
+      const response = await api.get('/summary');
+      setReport(response.data);
+      setIsCached(Boolean(response.cached));
+      setStatus('ok');
+    } catch (error) {
+      // ApiContext throws with the backend's own error message when available,
+      // e.g. "No visual logs found to summarize." on a 404.
+      const message = error?.message || 'Something went wrong loading your summary.';
+      if (message.toLowerCase().includes('no visual logs')) {
+        setStatus('empty');
+      } else {
+        setStatus('error');
+        setErrorMessage(message);
+      }
+    }
+  }, [api]);
+
+  useEffect(() => {
+    setIsLoading(true);
+    loadSummary().finally(() => setIsLoading(false));
+  }, [loadSummary]);
+
+  const onRefresh = useCallback(() => {
+    setIsRefreshing(true);
+    loadSummary().finally(() => setIsRefreshing(false));
+  }, [loadSummary]);
+
+  const badge = trendStyles(report?.overallTrendStatus);
 
   return (
-    <ScrollView 
-      className="flex-1 bg-slate-50" 
-      contentContainerStyle={{ padding: 24, paddingBottom: 120 }}
-      showsVerticalScrollIndicator={false}
-    >
-      {/* Premium Header Context */}
-      <View className="mb-6 mt-2">
-        <View className="flex-row items-center space-x-2">
-          <View className="w-8 h-8 bg-indigo-100 rounded-lg items-center justify-center">
-            <Ionicons name="camera-sharp" size={18} color="#4F46E5" />
-          </View>
-          <Text className="text-xs uppercase tracking-widest text-indigo-600 font-bold ml-2">Spatial Scan Registry</Text>
-        </View>
-        <Text className="text-3xl font-black text-slate-900 tracking-tight mt-1">Visual Log Tracker</Text>
-        <Text className="text-slate-500 text-sm mt-1">
-          Monitor surface level symmetry shifts and structural developments chronologically.
+    <SafeAreaView className="flex-1 bg-slate-50" edges={['top', 'left', 'right']}>
+      {/* Header */}
+      <View className="flex-row items-center px-5 pt-2 pb-4">
+        <TouchableOpacity
+          onPress={() => router.back()}
+          hitSlop={12}
+          className="w-10 h-10 rounded-full bg-white border border-slate-100 items-center justify-center"
+        >
+          <Ionicons name="chevron-back" size={20} color="#0F172A" />
+        </TouchableOpacity>
+        <Text className="flex-1 text-center text-base font-bold text-slate-900 mr-10">
+          Progress Summary
         </Text>
       </View>
 
-      {/* 📊 High-Tech Delta Comparison Panel */}
-      <View className="bg-gradient-to-br from-indigo-900 to-slate-900 bg-slate-900 p-5 rounded-3xl shadow-md mb-6 border border-slate-800">
-        <View className="flex-row justify-between items-center mb-3">
-          <Text className="text-white font-bold text-base">Historical Overlay Engine</Text>
-          <View className="bg-indigo-500/20 border border-indigo-500/30 px-2 py-0.5 rounded-full">
-            <Text className="text-indigo-300 text-[10px] font-mono font-bold uppercase">Ready</Text>
-          </View>
+      {isLoading ? (
+        <View className="flex-1 items-center justify-center">
+          <ActivityIndicator size="large" color="#0F172A" />
+          <Text className="text-slate-400 text-xs mt-3">Analyzing your tracking history…</Text>
         </View>
-        <Text className="text-slate-300 text-xs leading-5">
-          Select target monitoring zones below to filter historical assets. This pipeline runs image pixel adjustments to map localized delta variances.
-        </Text>
-        
-        {/* Statistics Banner */}
-        <View className="flex-row justify-between mt-4 pt-4 border-t border-slate-800">
-          <View>
-            <Text className="text-slate-400 text-[10px] uppercase font-bold tracking-wider">Tracked Zones</Text>
-            <Text className="text-white text-xl font-black mt-0.5">5 Active</Text>
+      ) : status === 'empty' ? (
+        <View className="flex-1 items-center justify-center px-8">
+          <View className="w-16 h-16 rounded-full bg-white border border-slate-100 items-center justify-center mb-4">
+            <Ionicons name="documents-outline" size={28} color="#94A3B8" />
           </View>
-          <View>
-            <Text className="text-slate-400 text-[10px] uppercase font-bold tracking-wider">Total Scans</Text>
-            <Text className="text-white text-xl font-black mt-0.5">24 Overlays</Text>
-          </View>
-          <View>
-            <Text className="text-slate-400 text-[10px] uppercase font-bold tracking-wider">System Baseline</Text>
-            <Text className="text-emerald-400 text-xl font-black mt-0.5">Optimal</Text>
-          </View>
+          <Text className="text-slate-900 font-bold text-base text-center">No scans yet</Text>
+          <Text className="text-slate-500 text-sm text-center mt-2 leading-5">
+            Run at least one Quick Test scan and we'll start building your longitudinal progress summary here.
+          </Text>
+          <TouchableOpacity
+            onPress={() => router.push('/(app)/(tabs)/quick-test')}
+            className="mt-6 h-11 px-6 bg-black rounded-full items-center justify-center"
+          >
+            <Text className="text-white font-semibold text-sm">Run a Quick Test</Text>
+          </TouchableOpacity>
         </View>
-      </View>
-
-      {/* 🏷️ Horizontal Filter Carousel */}
-      <View className="mb-5">
-        <FlatList
-          data={metricZones}
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          keyExtractor={(item) => item}
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              onPress={() => setSelectedZone(item)}
-              className={`px-4 h-10 rounded-full items-center justify-center mr-2 border ${
-                selectedZone === item 
-                  ? 'bg-indigo-600 border-indigo-600 shadow-sm' 
-                  : 'bg-white border-slate-200'
-              }`}
-            >
-              <Text className={`text-xs font-bold tracking-tight ${selectedZone === item ? 'text-white' : 'text-slate-600'}`}>
-                {item}
-              </Text>
-            </TouchableOpacity>
-          )}
-        />
-      </View>
-
-      {/* 🗂️ History Tracking Registry Feed */}
-      <View className="space-y-4">
-        <Text className="text-slate-800 font-bold text-base mb-2">Chronological Registry ({filteredHistory.length})</Text>
-        
-        {filteredHistory.length === 0 ? (
-          <View className="bg-white border border-slate-100 rounded-3xl p-8 items-center justify-center">
-            <Ionicons name="folder-open-outline" size={32} color="#94A3B8" />
-            <Text className="text-slate-500 font-medium text-sm mt-2">No entries logged under this zone context yet.</Text>
+      ) : status === 'error' ? (
+        <View className="flex-1 items-center justify-center px-8">
+          <View className="w-16 h-16 rounded-full bg-white border border-slate-100 items-center justify-center mb-4">
+            <Ionicons name="alert-circle-outline" size={28} color="#E11D48" />
           </View>
-        ) : (
-          filteredHistory.map((item) => (
-            <View key={item.id} className="bg-white border border-slate-100 rounded-3xl p-4 shadow-sm flex-row items-center mb-3">
-              {/* Media Asset Preview Frame */}
-              <Image source={{ uri: item.image }} className="w-20 h-20 bg-slate-100 rounded-2xl" resizeMode="cover" />
-              
-              {/* Informational Cluster Metadata */}
-              <View className="flex-1 ml-4 justify-center">
-                <View className="flex-row justify-between items-center">
-                  <Text className="text-slate-900 font-black text-base tracking-tight">{item.zone}</Text>
-                  
-                  {/* Dynamic Custom Badge Pills */}
-                  <View 
-                    style={{ backgroundColor: `${item.statusColor}15` }} 
-                    className="px-2 py-0.5 rounded-md border border-transparent"
-                  >
-                    <Text style={{ color: item.statusColor }} className="text-[10px] font-bold uppercase tracking-wider">
-                      {item.status}
-                    </Text>
-                  </View>
-                </View>
-                
-                <Text className="text-slate-400 text-xs font-medium mt-0.5">{item.date}</Text>
-                
-                <View className="bg-slate-50 border border-slate-100 p-2 rounded-xl mt-2 flex-row items-center">
-                  <Ionicons name="git-commit-outline" size={12} color="#4F46E5" />
-                  <Text className="text-slate-600 text-[11px] font-mono font-medium ml-1.5 tracking-tight">
-                    {item.metrics}
-                  </Text>
-                </View>
-              </View>
+          <Text className="text-slate-900 font-bold text-base text-center">Couldn't load your summary</Text>
+          <Text className="text-slate-500 text-sm text-center mt-2 leading-5">{errorMessage}</Text>
+          <TouchableOpacity
+            onPress={onRefresh}
+            className="mt-6 h-11 px-6 bg-black rounded-full items-center justify-center"
+          >
+            <Text className="text-white font-semibold text-sm">Try Again</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <ScrollView
+          className="flex-1 px-5"
+          contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}
+          refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor="#0F172A" />}
+        >
+          {/* Trend status + scan count */}
+          <View className="bg-white border border-slate-100 rounded-3xl p-5 mb-4">
+            <View className={`self-start flex-row items-center px-3 py-1.5 rounded-full border ${badge.bg} ${badge.border}`}>
+              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: badge.dot, marginRight: 6 }} />
+              <Text className={`text-xs font-bold ${badge.text}`}>{report.overallTrendStatus}</Text>
             </View>
-          ))
-        )}
-      </View>
-    </ScrollView>
+            <Text className="text-slate-400 text-xs mt-3">
+              Based on {report.totalLogsAnalyzed} tracked {report.totalLogsAnalyzed === 1 ? 'scan' : 'scans'}
+              {isCached ? ' · cached' : ''}
+            </Text>
+          </View>
+
+          {/* Executive summary */}
+          <View className="bg-white border border-slate-100 rounded-3xl p-5 mb-4">
+            <Text className="text-slate-900 font-bold text-sm mb-2">Executive Summary</Text>
+            <Text className="text-slate-600 text-sm leading-5">{report.executiveSummary}</Text>
+          </View>
+
+          {/* Key observations */}
+          {Array.isArray(report.keyObservations) && report.keyObservations.length > 0 && (
+            <View className="bg-white border border-slate-100 rounded-3xl p-5 mb-4">
+              <Text className="text-slate-900 font-bold text-sm mb-3">Key Observations</Text>
+              {report.keyObservations.map((observation, index) => (
+                <View key={index} className="flex-row items-start mb-2">
+                  <View className="w-1.5 h-1.5 rounded-full bg-slate-300 mt-2 mr-3" />
+                  <Text className="flex-1 text-slate-600 text-sm leading-5">{observation}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+
+          {/* Recommended next steps */}
+          {Array.isArray(report.recommendedNextSteps) && report.recommendedNextSteps.length > 0 && (
+            <View className="bg-white border border-slate-100 rounded-3xl p-5 mb-4">
+              <Text className="text-slate-900 font-bold text-sm mb-3">Recommended Next Steps</Text>
+              {report.recommendedNextSteps.map((step, index) => (
+                <View key={index} className="flex-row items-start mb-2">
+                  <Ionicons name="checkmark-circle" size={16} color="#0F172A" style={{ marginTop: 1, marginRight: 8 }} />
+                  <Text className="flex-1 text-slate-600 text-sm leading-5">{step}</Text>
+                </View>
+              ))}
+            </View>
+          )}
+        </ScrollView>
+      )}
+    </SafeAreaView>
   );
 }

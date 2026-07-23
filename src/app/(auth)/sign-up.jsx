@@ -110,13 +110,16 @@ export default function SignUp() {
   };
 
   const finalizeAndEnter = async () => {
+    // No router.replace here on purpose: setting the session active flips
+    // Clerk's isSignedIn to true, and AppShell's own effect (app/_layout.jsx)
+    // reacts to that and does the redirect. Navigating from both places at
+    // once races the navigator and is what was causing intermittent crashes
+    // / stale isSignedIn:false reads on native.
     await signUp.finalize({
       navigate: ({ session }) => {
         if (session?.currentTask) {
           // App doesn't have custom UI for pending session tasks yet.
-          return;
         }
-        router.replace('/(app)/(tabs)');
       },
     });
   };
@@ -208,8 +211,9 @@ export default function SignUp() {
         redirectUrl: makeRedirectUri(),
       });
       if (createdSessionId && setActive) {
+        // AppShell's effect handles the redirect once isSignedIn flips —
+        // don't also navigate here (see note in finalizeAndEnter above).
         await setActive({ session: createdSessionId });
-        router.replace('/(app)/(tabs)');
       }
     } catch (error) {
       setFormError(getClerkErrorMessage(error));

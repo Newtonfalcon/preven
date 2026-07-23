@@ -3,7 +3,8 @@ import { ClerkProvider, useAuth } from '@clerk/expo';
 import { useEffect } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { tokenCache } from '../utils/cache'; // Import your secure cache adapter
+//import { tokenCache } from '../utils/cache'; // Import your secure cache adapter
+import {tokenCache} from '@clerk/expo/token-cache'
 import {ApiProvider} from '../context/ApiContext'
 import '../../global.css'; // Required once at the app root for NativeWind styles to apply
 
@@ -24,6 +25,7 @@ function AppShell() {
   const router = useRouter();
 
   useEffect(() => {
+    console.log('[auth guard]', { isLoaded, isSignedIn, segments });
     if (!isLoaded) return;
 
     const inAppGroup = segments[0] === '(app)';

@@ -1,12 +1,15 @@
 import { Tabs, usePathname, useRouter } from 'expo-router';
 import { useRef, useState } from 'react';
 import { Animated, Dimensions, Text, TouchableOpacity, View } from 'react-native';
-// High-grade native vector icons from the built-in Expo suite
+import { StatusBar } from 'expo-status-bar';
 import { Ionicons } from '@expo/vector-icons';
 
 const { width } = Dimensions.get('window');
-const CLOSED_WIDTH = 70;      // Compact resting pill width
-const OPEN_WIDTH = width - 32; // Full premium widescreen navigation bar width
+const CLOSED_WIDTH = 64;       // Compact trigger pill width
+const OPEN_WIDTH = width - 32; // Expanded widescreen navigation bar width
+
+const ACTIVE_COLOR = '#000000';   // Black for active states
+const INACTIVE_COLOR = '#666666'; // Muted dark slate for inactive states
 
 export default function TabsLayout() {
   const router = useRouter();
@@ -14,84 +17,93 @@ export default function TabsLayout() {
   const [isExpanded, setIsExpanded] = useState(false);
   const dockWidth = useRef(new Animated.Value(CLOSED_WIDTH)).current;
 
-  const expandDock = () => {
-    if (isExpanded) return; // Prevent double trigger actions
-    setIsExpanded(true);
-
+  const toggleDock = (expand) => {
+    setIsExpanded(expand);
     Animated.spring(dockWidth, {
-      toValue: OPEN_WIDTH,
+      toValue: expand ? OPEN_WIDTH : CLOSED_WIDTH,
       friction: 8,
       tension: 40,
       useNativeDriver: false,
     }).start();
   };
 
+  const handleNavigation = (route) => {
+    const path = route === '/' ? '/' : `/(app)/(tabs)/${route}`;
+    router.push(path);
+  };
 
   const navItems = [
     { name: 'Home', route: '/', icon: 'home-sharp' },
     { name: 'Test', route: 'quick-test', icon: 'flask-sharp' },
     { name: 'Checkup', route: 'visual-checkup', icon: 'camera-sharp' },
-    
     { name: 'Profile', route: 'health-profile', icon: 'person-sharp' },
     { name: 'Settings', route: 'settings', icon: 'settings-sharp' },
   ];
 
   return (
     <View className="flex-1 bg-slate-50">
-      
+      {/* Ensures status bar icons remain dark/black */}
+      <StatusBar style="dark" />
+
       <Tabs
         screenOptions={{
           headerShown: false,
-          tabBarStyle: { display: 'none' }, // Keeps default system bar invisible
+          tabBarStyle: { display: 'none' },
         }}
       />
 
-      {/* 🔮 Premium Floating Dynamic Dock */}
-      <View className="absolute bottom-6 left-0 right-0 items-center justify-center z-50 px-4">
-        <Animated.View
-          style={{ width: dockWidth }}
-          className="h-16 bg-white border border-slate-100/80 rounded-full flex-row items-center justify-between px-2 shadow-xl shadow-slate-200/60"
-        >
-          {!isExpanded ? (
-            /* 🧭 Compact Trigger Pill (Touch to Unlock App Context) */
-            <TouchableOpacity
-              onPress={expandDock}
-              className="w-full h-full flex-row items-center justify-center bg-indigo-600 rounded-full"
-            >
-              <Ionicons name="apps-sharp" size={20} color="white" />
-            </TouchableOpacity>
-          ) : (
-            /* 🗺️ Expanded Permanent Nav Ribbon Grid System */
-            <View className="flex-1 flex-row justify-around items-center px-2">
-              {navItems.map((item) => {
-                const isActive = currentPath.endsWith(item.route);
-                return (
-                  <TouchableOpacity
-                    key={item.route}
-                    onPress={() => {
-                      router.push(`/(app)/(tabs)/${item.route}`);
-                    }}
-                    className="items-center justify-center p-2 rounded-xl"
+      {/* Floating Dynamic Dock with Pure White BG & Black Outline Border */}
+      <Animated.View
+        style={{ width: dockWidth }}
+        className="absolute bottom-8 self-center h-16 bg-white border-[0.2px] border-black rounded-full flex-row items-center justify-between px-2 shadow-lg shadow-black/10 z-50 overflow-hidden"
+      >
+        {!isExpanded ? (
+          /* Collapsed State: Black background with white icon */
+          <TouchableOpacity
+            activeOpacity={0.8}
+            onPress={() => toggleDock(true)}
+            className="w-full h-12 bg-black rounded-full items-center justify-center self-center"
+          >
+            <Ionicons name="apps-sharp" size={22} color="#FFFFFF" />
+          </TouchableOpacity>
+        ) : (
+          /* Expanded State: Pure white background with black border & bold text */
+          <View className="flex-1 flex-row justify-around items-center px-1">
+            {navItems.map((item) => {
+              const isActive =
+                item.route === '/'
+                  ? currentPath === '/' || currentPath.endsWith('(tabs)')
+                  : currentPath.includes(item.route);
+
+              const isHome = item.route === '/';
+
+              return (
+                <TouchableOpacity
+                  key={item.route}
+                  activeOpacity={0.7}
+                  onPress={() => handleNavigation(item.route)}
+                  onLongPress={isHome ? () => toggleDock(false) : undefined}
+                  delayLongPress={300}
+                  className="items-center justify-center px-2 py-1 rounded-xl"
+                >
+                  <Ionicons
+                    name={item.icon}
+                    size={22}
+                    color={isActive ? ACTIVE_COLOR : INACTIVE_COLOR}
+                  />
+                  <Text
+                    className={`text-[10px] mt-1 tracking-tight ${
+                      isActive ? 'text-black font-black' : 'text-zinc-600 font-bold'
+                    }`}
                   >
-                    <Ionicons 
-                      name={item.icon} 
-                      size={22} 
-                      color={isActive ? '#4F46E5' : '#94A3B8'} // Indigo-600 active vs Slate-400 inactive
-                    />
-                    <Text
-                      className={`text-[10px] mt-1 tracking-tight font-medium ${
-                        isActive ? 'text-indigo-600 font-bold' : 'text-slate-400'
-                      }`}
-                    >
-                      {item.name}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          )}
-        </Animated.View>
-      </View>
+                    {item.name}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        )}
+      </Animated.View>
     </View>
   );
 }

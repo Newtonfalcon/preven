@@ -4,7 +4,7 @@ import { useAuth } from '@clerk/expo';
 const ApiContext = createContext(null);
 
 // Replace with your backend URL (or process.env.EXPO_PUBLIC_API_URL)
-const API_BASE_URL = 'http://172.28.25.150/api/v1';
+const API_BASE_URL = 'http://172.28.25.150:3000/api/v1';
 
 export function ApiProvider({ children }) {
   const { getToken } = useAuth();
@@ -14,9 +14,11 @@ export function ApiProvider({ children }) {
       try {
         // Fetch fresh Clerk JWT
         const token = await getToken();
+        const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
 
         const headers = {
-          'Content-Type': 'application/json',
+          // Let fetch set its own multipart boundary header for FormData bodies.
+          ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
           ...options.headers,
         };
@@ -40,18 +42,22 @@ export function ApiProvider({ children }) {
 
     return {
       get: (endpoint, options) => request(endpoint, { ...options, method: 'GET' }),
-      post: (endpoint, body, options) =>
-        request(endpoint, {
+      post: (endpoint, body, options) => {
+        const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
+        return request(endpoint, {
           ...options,
           method: 'POST',
-          body: JSON.stringify(body),
-        }),
-      put: (endpoint, body, options) =>
-        request(endpoint, {
+          body: isFormData ? body : JSON.stringify(body),
+        });
+      },
+      put: (endpoint, body, options) => {
+        const isFormData = typeof FormData !== 'undefined' && body instanceof FormData;
+        return request(endpoint, {
           ...options,
           method: 'PUT',
-          body: JSON.stringify(body),
-        }),
+          body: isFormData ? body : JSON.stringify(body),
+        });
+      },
       delete: (endpoint, options) => request(endpoint, { ...options, method: 'DELETE' }),
     };
   }, [getToken]);
