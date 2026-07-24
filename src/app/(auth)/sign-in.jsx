@@ -2,7 +2,6 @@ import { Fraunces_500Medium } from '@expo-google-fonts/fraunces';
 import { Manrope_500Medium, Manrope_700Bold } from '@expo-google-fonts/manrope';
 import { Feather } from '@expo/vector-icons';
 import { useSignIn, useSSO } from '@clerk/expo';
-import { makeRedirectUri } from 'expo-auth-session';
 import { useFonts } from 'expo-font';
 import { useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
@@ -20,16 +19,17 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
+import { oauthRedirectUrl } from '../utils/oauth';
 
 // Colors match the welcome screen (src/app/index.jsx)
 const C = {
-  text: '#F5F3EF',
-  muted: '#8B93A0',
-  placeholder: '#5B6270',
-  border: '#1F2124',
-  surface: '#0D0E10',
-  danger: '#FF6B6B',
-  dangerBg: 'rgba(255,107,107,0.12)',
+  text: '#0F172A',
+  muted: '#64748B',
+  placeholder: '#94A3B8',
+  border: '#E2E8F0',
+  surface: '#F8FAFC',
+  danger: '#E11D48',
+  dangerBg: 'rgba(225,29,72,0.08)',
 };
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -188,14 +188,19 @@ export default function SignIn() {
     try {
       const { createdSessionId, setActive } = await startSSOFlow({
         strategy: 'oauth_google',
-        redirectUrl: makeRedirectUri(),
+        redirectUrl: oauthRedirectUrl,
       });
       if (createdSessionId && setActive) {
         // AppShell's effect handles the redirect once isSignedIn flips —
         // don't also navigate here (see note in finalizeAndEnter above).
         await setActive({ session: createdSessionId });
       }
+      // No createdSessionId and no error thrown almost always means the
+      // user closed the browser sheet themselves — don't surface an error.
     } catch (error) {
+      // Log the raw error for debugging on native, where the message shown
+      // to the user is often a generic fallback.
+      console.error('[Google sign-in]', error);
       setFormError(getClerkErrorMessage(error));
     } finally {
       setGoogleSubmitting(false);
@@ -287,55 +292,63 @@ export default function SignIn() {
   // --- Verify (client trust) screen ---
   if (mode === 'verify') {
     return (
-      <View className="flex-1 bg-black">
-        <SafeAreaView className="flex-1">
-          <View className="flex-1 px-8 pb-8 pt-6">
-            <Text className={`${displayFont} text-3xl text-[#F5F3EF]`}>Verify it’s you</Text>
-            <Text className={`${bodyFont} mt-2 text-base text-[#8B93A0]`}>
-              We sent a verification code to {email.trim()}.
-            </Text>
-
-            {formError ? (
-              <View className="mt-4 rounded-xl px-4 py-3" style={{ backgroundColor: C.dangerBg }}>
-                <Text className={`${bodyFont} text-sm text-[#FF6B6B]`}>{formError}</Text>
-              </View>
-            ) : null}
-
-            <View className="mt-6 mb-4">
-              <Text className={`${bodyFont} mb-2 text-xs text-[#8B93A0]`}>Verification code</Text>
-              <View
-                className="flex-row items-center rounded-2xl px-4"
-                style={{ borderWidth: 1, borderColor: C.border, backgroundColor: C.surface }}
-              >
-                <TextInput
-                  value={code}
-                  onChangeText={setCode}
-                  placeholder="123456"
-                  placeholderTextColor={C.placeholder}
-                  keyboardType="number-pad"
-                  editable={!busy}
-                  className={`${bodyFont} flex-1 py-4 text-base`}
-                  style={{ color: C.text }}
-                />
-              </View>
-            </View>
-
-            <Pressable
-              onPress={handleVerifyClientTrust}
-              disabled={!code || busy}
-              className={`w-full items-center rounded-2xl bg-white py-4 active:opacity-80 ${(!code || busy) ? 'opacity-50' : ''}`}
+      <View className="flex-1 bg-white">
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} className="flex-1">
+          <SafeAreaView className="flex-1">
+            <ScrollView
+              contentContainerStyle={{ flexGrow: 1 }}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
             >
-              {submitting ? <ActivityIndicator color="#000000" /> : <Text className={`${boldFont} text-base text-black`}>Verify</Text>}
-            </Pressable>
+              <View className="flex-1 px-8 pb-8 pt-6">
+                <Text className={`${displayFont} text-3xl text-[#0F172A]`}>Verify it’s you</Text>
+                <Text className={`${bodyFont} mt-2 text-base text-[#64748B]`}>
+                  We sent a verification code to {email.trim()}.
+                </Text>
 
-            <Pressable onPress={() => signIn.mfa.sendEmailCode()} className="mt-4 items-center" hitSlop={8}>
-              <Text className={`${bodyFont} text-sm text-[#8B93A0]`}>I need a new code</Text>
-            </Pressable>
-            <Pressable onPress={resetToSignIn} className="mt-2 items-center" hitSlop={8}>
-              <Text className={`${bodyFont} text-sm text-[#8B93A0]`}>Start over</Text>
-            </Pressable>
-          </View>
-        </SafeAreaView>
+                {formError ? (
+                  <View className="mt-4 rounded-xl px-4 py-3" style={{ backgroundColor: C.dangerBg }}>
+                    <Text className={`${bodyFont} text-sm text-[#E11D48]`}>{formError}</Text>
+                  </View>
+                ) : null}
+
+                <View className="mt-6 mb-4">
+                  <Text className={`${bodyFont} mb-2 text-xs text-[#64748B]`}>Verification code</Text>
+                  <View
+                    className="flex-row items-center rounded-2xl px-4"
+                    style={{ borderWidth: 1, borderColor: C.border, backgroundColor: C.surface }}
+                  >
+                    <TextInput
+                      value={code}
+                      onChangeText={setCode}
+                      placeholder="123456"
+                      placeholderTextColor={C.placeholder}
+                      keyboardType="number-pad"
+                      editable={!busy}
+                      className={`${bodyFont} flex-1 py-4 text-base`}
+                      style={{ color: C.text }}
+                    />
+                  </View>
+                </View>
+
+                <Pressable
+                  onPress={handleVerifyClientTrust}
+                  disabled={!code || busy}
+                  className={`w-full items-center rounded-2xl bg-black py-4 active:opacity-80 ${(!code || busy) ? 'opacity-50' : ''}`}
+                >
+                  {submitting ? <ActivityIndicator color="#FFFFFF" /> : <Text className={`${boldFont} text-base text-white`}>Verify</Text>}
+                </Pressable>
+
+                <Pressable onPress={() => signIn.mfa.sendEmailCode()} className="mt-4 items-center" hitSlop={8}>
+                  <Text className={`${bodyFont} text-sm text-[#64748B]`}>I need a new code</Text>
+                </Pressable>
+                <Pressable onPress={resetToSignIn} className="mt-2 items-center" hitSlop={8}>
+                  <Text className={`${bodyFont} text-sm text-[#64748B]`}>Start over</Text>
+                </Pressable>
+              </View>
+            </ScrollView>
+          </SafeAreaView>
+        </KeyboardAvoidingView>
       </View>
     );
   }
@@ -343,60 +356,68 @@ export default function SignIn() {
   // --- Forgot password: send code ---
   if (mode === 'resetEmail') {
     return (
-      <View className="flex-1 bg-black">
-        <SafeAreaView className="flex-1">
-          <View className="flex-1 px-8 pb-8 pt-6">
-            <Text className={`${displayFont} text-3xl text-[#F5F3EF]`}>Reset password</Text>
-            <Text className={`${bodyFont} mt-2 text-base text-[#8B93A0]`}>
-              Enter your email and we’ll send you a reset code.
-            </Text>
-
-            {formError ? (
-              <View className="mt-4 rounded-xl px-4 py-3" style={{ backgroundColor: C.dangerBg }}>
-                <Text className={`${bodyFont} text-sm text-[#FF6B6B]`}>{formError}</Text>
-              </View>
-            ) : null}
-
-            <View className="mt-6 mb-4">
-              <Text className={`${bodyFont} mb-2 text-xs text-[#8B93A0]`}>Email</Text>
-              <View
-                className="flex-row items-center rounded-2xl px-4"
-                style={{ borderWidth: 1, borderColor: fieldErrors.email ? C.danger : C.border, backgroundColor: C.surface }}
-              >
-                <TextInput
-                  value={email}
-                  onChangeText={(text) => {
-                    setEmail(text);
-                    clearFieldError('email');
-                  }}
-                  placeholder="you@example.com"
-                  placeholderTextColor={C.placeholder}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  editable={!busy}
-                  className={`${bodyFont} flex-1 py-4 text-base`}
-                  style={{ color: C.text }}
-                />
-              </View>
-              {fieldErrors.email ? (
-                <Text className={`${bodyFont} mt-1.5 text-xs text-[#FF6B6B]`}>{fieldErrors.email}</Text>
-              ) : null}
-            </View>
-
-            <Pressable
-              onPress={handleSendResetCode}
-              disabled={busy}
-              className={`w-full items-center rounded-2xl bg-white py-4 active:opacity-80 ${busy ? 'opacity-50' : ''}`}
+      <View className="flex-1 bg-white">
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} className="flex-1">
+          <SafeAreaView className="flex-1">
+            <ScrollView
+              contentContainerStyle={{ flexGrow: 1 }}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
             >
-              {submitting ? <ActivityIndicator color="#000000" /> : <Text className={`${boldFont} text-base text-black`}>Send reset code</Text>}
-            </Pressable>
+              <View className="flex-1 px-8 pb-8 pt-6">
+                <Text className={`${displayFont} text-3xl text-[#0F172A]`}>Reset password</Text>
+                <Text className={`${bodyFont} mt-2 text-base text-[#64748B]`}>
+                  Enter your email and we’ll send you a reset code.
+                </Text>
 
-            <Pressable onPress={resetToSignIn} className="mt-4 items-center" hitSlop={8}>
-              <Text className={`${bodyFont} text-sm text-[#8B93A0]`}>Back to sign in</Text>
-            </Pressable>
-          </View>
-        </SafeAreaView>
+                {formError ? (
+                  <View className="mt-4 rounded-xl px-4 py-3" style={{ backgroundColor: C.dangerBg }}>
+                    <Text className={`${bodyFont} text-sm text-[#E11D48]`}>{formError}</Text>
+                  </View>
+                ) : null}
+
+                <View className="mt-6 mb-4">
+                  <Text className={`${bodyFont} mb-2 text-xs text-[#64748B]`}>Email</Text>
+                  <View
+                    className="flex-row items-center rounded-2xl px-4"
+                    style={{ borderWidth: 1, borderColor: fieldErrors.email ? C.danger : C.border, backgroundColor: C.surface }}
+                  >
+                    <TextInput
+                      value={email}
+                      onChangeText={(text) => {
+                        setEmail(text);
+                        clearFieldError('email');
+                      }}
+                      placeholder="you@example.com"
+                      placeholderTextColor={C.placeholder}
+                      keyboardType="email-address"
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      editable={!busy}
+                      className={`${bodyFont} flex-1 py-4 text-base`}
+                      style={{ color: C.text }}
+                    />
+                  </View>
+                  {fieldErrors.email ? (
+                    <Text className={`${bodyFont} mt-1.5 text-xs text-[#E11D48]`}>{fieldErrors.email}</Text>
+                  ) : null}
+                </View>
+
+                <Pressable
+                  onPress={handleSendResetCode}
+                  disabled={busy}
+                  className={`w-full items-center rounded-2xl bg-black py-4 active:opacity-80 ${busy ? 'opacity-50' : ''}`}
+                >
+                  {submitting ? <ActivityIndicator color="#FFFFFF" /> : <Text className={`${boldFont} text-base text-white`}>Send reset code</Text>}
+                </Pressable>
+
+                <Pressable onPress={resetToSignIn} className="mt-4 items-center" hitSlop={8}>
+                  <Text className={`${bodyFont} text-sm text-[#64748B]`}>Back to sign in</Text>
+                </Pressable>
+              </View>
+            </ScrollView>
+          </SafeAreaView>
+        </KeyboardAvoidingView>
       </View>
     );
   }
@@ -404,52 +425,60 @@ export default function SignIn() {
   // --- Forgot password: enter code ---
   if (mode === 'resetCode') {
     return (
-      <View className="flex-1 bg-black">
-        <SafeAreaView className="flex-1">
-          <View className="flex-1 px-8 pb-8 pt-6">
-            <Text className={`${displayFont} text-3xl text-[#F5F3EF]`}>Enter the code</Text>
-            <Text className={`${bodyFont} mt-2 text-base text-[#8B93A0]`}>
-              We sent a reset code to {email.trim()}.
-            </Text>
-
-            {formError ? (
-              <View className="mt-4 rounded-xl px-4 py-3" style={{ backgroundColor: C.dangerBg }}>
-                <Text className={`${bodyFont} text-sm text-[#FF6B6B]`}>{formError}</Text>
-              </View>
-            ) : null}
-
-            <View className="mt-6 mb-4">
-              <Text className={`${bodyFont} mb-2 text-xs text-[#8B93A0]`}>Verification code</Text>
-              <View
-                className="flex-row items-center rounded-2xl px-4"
-                style={{ borderWidth: 1, borderColor: C.border, backgroundColor: C.surface }}
-              >
-                <TextInput
-                  value={code}
-                  onChangeText={setCode}
-                  placeholder="123456"
-                  placeholderTextColor={C.placeholder}
-                  keyboardType="number-pad"
-                  editable={!busy}
-                  className={`${bodyFont} flex-1 py-4 text-base`}
-                  style={{ color: C.text }}
-                />
-              </View>
-            </View>
-
-            <Pressable
-              onPress={handleVerifyResetCode}
-              disabled={!code || busy}
-              className={`w-full items-center rounded-2xl bg-white py-4 active:opacity-80 ${(!code || busy) ? 'opacity-50' : ''}`}
+      <View className="flex-1 bg-white">
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} className="flex-1">
+          <SafeAreaView className="flex-1">
+            <ScrollView
+              contentContainerStyle={{ flexGrow: 1 }}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
             >
-              {submitting ? <ActivityIndicator color="#000000" /> : <Text className={`${boldFont} text-base text-black`}>Verify code</Text>}
-            </Pressable>
+              <View className="flex-1 px-8 pb-8 pt-6">
+                <Text className={`${displayFont} text-3xl text-[#0F172A]`}>Enter the code</Text>
+                <Text className={`${bodyFont} mt-2 text-base text-[#64748B]`}>
+                  We sent a reset code to {email.trim()}.
+                </Text>
 
-            <Pressable onPress={resetToSignIn} className="mt-4 items-center" hitSlop={8}>
-              <Text className={`${bodyFont} text-sm text-[#8B93A0]`}>Back to sign in</Text>
-            </Pressable>
-          </View>
-        </SafeAreaView>
+                {formError ? (
+                  <View className="mt-4 rounded-xl px-4 py-3" style={{ backgroundColor: C.dangerBg }}>
+                    <Text className={`${bodyFont} text-sm text-[#E11D48]`}>{formError}</Text>
+                  </View>
+                ) : null}
+
+                <View className="mt-6 mb-4">
+                  <Text className={`${bodyFont} mb-2 text-xs text-[#64748B]`}>Verification code</Text>
+                  <View
+                    className="flex-row items-center rounded-2xl px-4"
+                    style={{ borderWidth: 1, borderColor: C.border, backgroundColor: C.surface }}
+                  >
+                    <TextInput
+                      value={code}
+                      onChangeText={setCode}
+                      placeholder="123456"
+                      placeholderTextColor={C.placeholder}
+                      keyboardType="number-pad"
+                      editable={!busy}
+                      className={`${bodyFont} flex-1 py-4 text-base`}
+                      style={{ color: C.text }}
+                    />
+                  </View>
+                </View>
+
+                <Pressable
+                  onPress={handleVerifyResetCode}
+                  disabled={!code || busy}
+                  className={`w-full items-center rounded-2xl bg-black py-4 active:opacity-80 ${(!code || busy) ? 'opacity-50' : ''}`}
+                >
+                  {submitting ? <ActivityIndicator color="#FFFFFF" /> : <Text className={`${boldFont} text-base text-white`}>Verify code</Text>}
+                </Pressable>
+
+                <Pressable onPress={resetToSignIn} className="mt-4 items-center" hitSlop={8}>
+                  <Text className={`${bodyFont} text-sm text-[#64748B]`}>Back to sign in</Text>
+                </Pressable>
+              </View>
+            </ScrollView>
+          </SafeAreaView>
+        </KeyboardAvoidingView>
       </View>
     );
   }
@@ -457,64 +486,72 @@ export default function SignIn() {
   // --- Forgot password: set new password ---
   if (mode === 'resetPassword') {
     return (
-      <View className="flex-1 bg-black">
-        <SafeAreaView className="flex-1">
-          <View className="flex-1 px-8 pb-8 pt-6">
-            <Text className={`${displayFont} text-3xl text-[#F5F3EF]`}>New password</Text>
-            <Text className={`${bodyFont} mt-2 text-base text-[#8B93A0]`}>
-              Choose a new password for your account.
-            </Text>
-
-            {formError ? (
-              <View className="mt-4 rounded-xl px-4 py-3" style={{ backgroundColor: C.dangerBg }}>
-                <Text className={`${bodyFont} text-sm text-[#FF6B6B]`}>{formError}</Text>
-              </View>
-            ) : null}
-
-            <View className="mt-6 mb-4">
-              <Text className={`${bodyFont} mb-2 text-xs text-[#8B93A0]`}>New password</Text>
-              <View
-                className="flex-row items-center rounded-2xl px-4"
-                style={{ borderWidth: 1, borderColor: fieldErrors.newPassword ? C.danger : C.border, backgroundColor: C.surface }}
-              >
-                <TextInput
-                  value={newPassword}
-                  onChangeText={(text) => {
-                    setNewPassword(text);
-                    clearFieldError('newPassword');
-                  }}
-                  placeholder="At least 6 characters"
-                  placeholderTextColor={C.placeholder}
-                  secureTextEntry
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  editable={!busy}
-                  className={`${bodyFont} flex-1 py-4 text-base`}
-                  style={{ color: C.text }}
-                />
-              </View>
-              {fieldErrors.newPassword ? (
-                <Text className={`${bodyFont} mt-1.5 text-xs text-[#FF6B6B]`}>{fieldErrors.newPassword}</Text>
-              ) : null}
-            </View>
-
-            <Pressable
-              onPress={handleSubmitNewPassword}
-              disabled={busy}
-              className={`w-full items-center rounded-2xl bg-white py-4 active:opacity-80 ${busy ? 'opacity-50' : ''}`}
+      <View className="flex-1 bg-white">
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} className="flex-1">
+          <SafeAreaView className="flex-1">
+            <ScrollView
+              contentContainerStyle={{ flexGrow: 1 }}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
             >
-              {submitting ? <ActivityIndicator color="#000000" /> : <Text className={`${boldFont} text-base text-black`}>Set new password</Text>}
-            </Pressable>
-          </View>
-        </SafeAreaView>
+              <View className="flex-1 px-8 pb-8 pt-6">
+                <Text className={`${displayFont} text-3xl text-[#0F172A]`}>New password</Text>
+                <Text className={`${bodyFont} mt-2 text-base text-[#64748B]`}>
+                  Choose a new password for your account.
+                </Text>
+
+                {formError ? (
+                  <View className="mt-4 rounded-xl px-4 py-3" style={{ backgroundColor: C.dangerBg }}>
+                    <Text className={`${bodyFont} text-sm text-[#E11D48]`}>{formError}</Text>
+                  </View>
+                ) : null}
+
+                <View className="mt-6 mb-4">
+                  <Text className={`${bodyFont} mb-2 text-xs text-[#64748B]`}>New password</Text>
+                  <View
+                    className="flex-row items-center rounded-2xl px-4"
+                    style={{ borderWidth: 1, borderColor: fieldErrors.newPassword ? C.danger : C.border, backgroundColor: C.surface }}
+                  >
+                    <TextInput
+                      value={newPassword}
+                      onChangeText={(text) => {
+                        setNewPassword(text);
+                        clearFieldError('newPassword');
+                      }}
+                      placeholder="At least 6 characters"
+                      placeholderTextColor={C.placeholder}
+                      secureTextEntry
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      editable={!busy}
+                      className={`${bodyFont} flex-1 py-4 text-base`}
+                      style={{ color: C.text }}
+                    />
+                  </View>
+                  {fieldErrors.newPassword ? (
+                    <Text className={`${bodyFont} mt-1.5 text-xs text-[#E11D48]`}>{fieldErrors.newPassword}</Text>
+                  ) : null}
+                </View>
+
+                <Pressable
+                  onPress={handleSubmitNewPassword}
+                  disabled={busy}
+                  className={`w-full items-center rounded-2xl bg-black py-4 active:opacity-80 ${busy ? 'opacity-50' : ''}`}
+                >
+                  {submitting ? <ActivityIndicator color="#FFFFFF" /> : <Text className={`${boldFont} text-base text-white`}>Set new password</Text>}
+                </Pressable>
+              </View>
+            </ScrollView>
+          </SafeAreaView>
+        </KeyboardAvoidingView>
       </View>
     );
   }
 
   // --- Main sign-in screen ---
   return (
-    <View className="flex-1 bg-black">
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} className="flex-1">
+    <View className="flex-1 bg-white">
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} className="flex-1">
         <SafeAreaView className="flex-1">
           <ScrollView
             contentContainerStyle={{ flexGrow: 1 }}
@@ -523,15 +560,15 @@ export default function SignIn() {
           >
             <View className="flex-1 px-8 pb-8 pt-6">
               <View className="mb-10">
-                <Text className={`${displayFont} text-3xl text-[#F5F3EF]`}>Welcome back</Text>
-                <Text className={`${bodyFont} mt-2 text-base text-[#8B93A0]`}>
+                <Text className={`${displayFont} text-3xl text-[#0F172A]`}>Welcome back</Text>
+                <Text className={`${bodyFont} mt-2 text-base text-[#64748B]`}>
                   Sign in to continue to Preven.
                 </Text>
               </View>
 
               {formError ? (
                 <View className="mb-4 rounded-xl px-4 py-3" style={{ backgroundColor: C.dangerBg }}>
-                  <Text className={`${bodyFont} text-sm text-[#FF6B6B]`}>{formError}</Text>
+                  <Text className={`${bodyFont} text-sm text-[#E11D48]`}>{formError}</Text>
                 </View>
               ) : null}
 
@@ -547,7 +584,7 @@ export default function SignIn() {
                 ) : (
                   <View className="flex-row items-center">
                     <GoogleGlyph />
-                    <Text className={`${bodyFont} ml-3 text-base text-[#F5F3EF]`}>
+                    <Text className={`${bodyFont} ml-3 text-base text-[#0F172A]`}>
                       Continue with Google
                     </Text>
                   </View>
@@ -557,7 +594,7 @@ export default function SignIn() {
               {/* Divider */}
               <View className="my-6 flex-row items-center">
                 <View className="h-[1px] flex-1" style={{ backgroundColor: C.border }} />
-                <Text className={`${bodyFont} mx-3 text-xs uppercase tracking-widest text-[#5B6270]`}>
+                <Text className={`${bodyFont} mx-3 text-xs uppercase tracking-widest text-[#94A3B8]`}>
                   or
                 </Text>
                 <View className="h-[1px] flex-1" style={{ backgroundColor: C.border }} />
@@ -565,7 +602,7 @@ export default function SignIn() {
 
               {/* Email */}
               <View className="mb-4">
-                <Text className={`${bodyFont} mb-2 text-xs text-[#8B93A0]`}>Email</Text>
+                <Text className={`${bodyFont} mb-2 text-xs text-[#64748B]`}>Email</Text>
                 <View
                   className="flex-row items-center rounded-2xl px-4"
                   style={{
@@ -593,13 +630,13 @@ export default function SignIn() {
                   />
                 </View>
                 {fieldErrors.email ? (
-                  <Text className={`${bodyFont} mt-1.5 text-xs text-[#FF6B6B]`}>{fieldErrors.email}</Text>
+                  <Text className={`${bodyFont} mt-1.5 text-xs text-[#E11D48]`}>{fieldErrors.email}</Text>
                 ) : null}
               </View>
 
               {/* Password */}
               <View className="mb-4">
-                <Text className={`${bodyFont} mb-2 text-xs text-[#8B93A0]`}>Password</Text>
+                <Text className={`${bodyFont} mb-2 text-xs text-[#64748B]`}>Password</Text>
                 <View
                   className="flex-row items-center rounded-2xl px-4"
                   style={{
@@ -634,7 +671,7 @@ export default function SignIn() {
                   </Pressable>
                 </View>
                 {fieldErrors.password ? (
-                  <Text className={`${bodyFont} mt-1.5 text-xs text-[#FF6B6B]`}>
+                  <Text className={`${bodyFont} mt-1.5 text-xs text-[#E11D48]`}>
                     {fieldErrors.password}
                   </Text>
                 ) : null}
@@ -649,26 +686,26 @@ export default function SignIn() {
                 className="mb-6 items-end"
                 hitSlop={8}
               >
-                <Text className={`${bodyFont} text-sm text-[#8B93A0]`}>Forgot password?</Text>
+                <Text className={`${bodyFont} text-sm text-[#64748B]`}>Forgot password?</Text>
               </Pressable>
 
               {/* Sign in button */}
               <Pressable
                 onPress={handleSignIn}
                 disabled={busy}
-                className={`w-full items-center rounded-2xl bg-white py-4 active:opacity-80 ${busy ? 'opacity-50' : ''}`}
+                className={`w-full items-center rounded-2xl bg-black py-4 active:opacity-80 ${busy ? 'opacity-50' : ''}`}
               >
                 {submitting ? (
-                  <ActivityIndicator color="#000000" />
+                  <ActivityIndicator color="#FFFFFF" />
                 ) : (
-                  <Text className={`${boldFont} text-base text-black`}>Sign in</Text>
+                  <Text className={`${boldFont} text-base text-white`}>Sign in</Text>
                 )}
               </Pressable>
 
               <View className="mt-8 flex-row justify-center">
-                <Text className={`${bodyFont} text-sm text-[#8B93A0]`}>Don't have an account? </Text>
+                <Text className={`${bodyFont} text-sm text-[#64748B]`}>Don't have an account? </Text>
                 <Pressable onPress={() => router.replace('/(auth)/sign-up')} hitSlop={8}>
-                  <Text className={`${boldFont} text-sm text-[#F5F3EF]`}>Create one</Text>
+                  <Text className={`${boldFont} text-sm text-[#0F172A]`}>Create one</Text>
                 </Pressable>
               </View>
             </View>

@@ -1,3 +1,4 @@
+import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
 import { useEffect, useMemo, useRef } from "react";
 import {
@@ -25,10 +26,10 @@ try {
 const { height: SCREEN_H, width: SCREEN_W } = Dimensions.get("window");
 
 const RAW = {
-  bg: "#040405",
-  pulse: "#3DDC97",
-  logoText: "#F5F3EF",
-  muted: "#8B93A0",
+  bg: "#FFFFFF",
+  pulse: "#10B981", // emerald accent, same family as the app's "stable" status color
+  logoText: "#0F172A",
+  muted: "#64748B",
 };
 
 const UNIT_WIDTH = 220;
@@ -116,7 +117,7 @@ function HeartRateScanner({ height = 110, top = SCREEN_H * 0.28, opacity = 0.55 
           right: 0,
           top: height / 2,
           height: StyleSheet.hairlineWidth,
-          backgroundColor: "rgba(61,220,151,0.15)",
+          backgroundColor: "rgba(16,185,129,0.15)",
         }}
       />
 
@@ -165,7 +166,7 @@ function HeartRateScanner({ height = 110, top = SCREEN_H * 0.28, opacity = 0.55 
           width: 8,
           height: 8,
           borderRadius: 4,
-          backgroundColor: "#EAFBF3",
+          backgroundColor: "#0F172A",
           opacity: coreOpacity,
         }}
       />
@@ -207,13 +208,21 @@ export default function Index() {
           }}
         >
           <View style={{ alignItems: "center", justifyContent: "center", marginTop: "auto", marginBottom: "auto" }}>
-            <Image
-              source={require("../../assets/images/logo.png")}
-              style={{ width: 112, height: 112, marginBottom: 20 }}
-              resizeMode="contain"
-            />
+            <LinearGradient
+              colors={["#1F2937", "#000000"]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.logoBadge}
+            >
+              <Image
+                source={require("../../assets/images/logo.png")}
+                style={{ width: 84, height: 84 }}
+                resizeMode="contain"
+              />
+            </LinearGradient>
             <Text
               style={{
+                marginTop: 20,
                 fontSize: 30,
                 letterSpacing: -0.5,
                 color: RAW.logoText,
@@ -244,12 +253,12 @@ export default function Index() {
                 <View
                   style={[
                     styles.button,
-                    { backgroundColor: pressed ? "#EAEAEA" : "#FFFFFF" }
+                    { backgroundColor: pressed ? "#1F2937" : "#000000" }
                   ]}
                 >
                   <Text
                     style={{
-                      color: "#000000",
+                      color: "#FFFFFF",
                       fontSize: 16,
                       textAlign: "center",
                       fontFamily: boldFont,
@@ -282,6 +291,18 @@ export default function Index() {
 }
 
 const styles = StyleSheet.create({
+  logoBadge: {
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.18,
+    shadowRadius: 14,
+    elevation: 6,
+  },
   button: {
     width: "100%",
     borderRadius: 16,

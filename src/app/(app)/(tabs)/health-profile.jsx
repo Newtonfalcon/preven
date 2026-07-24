@@ -15,8 +15,7 @@ import markdownStyles, { stripMarkdown } from '../../../utils/markdownStyles';
 
 const CARD_WIDTH = 168;
 
-// Maps the backend's free-text trend status into a consistent badge color —
-// same convention used on the Progress Summary screen.
+
 function trendStyles(status = '') {
   const normalized = status.toLowerCase();
   if (normalized.includes('flag')) {
