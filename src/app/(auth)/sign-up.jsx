@@ -1,13 +1,14 @@
 import { Fraunces_500Medium } from '@expo-google-fonts/fraunces';
 import { Manrope_500Medium, Manrope_700Bold } from '@expo-google-fonts/manrope';
 import { Feather } from '@expo/vector-icons';
-import { useSignUp, useSSO } from '@clerk/expo';
+import { useSignUp } from '@clerk/expo';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useFonts } from 'expo-font';
 import { useRouter } from 'expo-router';
-import * as WebBrowser from 'expo-web-browser';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
   ActivityIndicator,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -17,8 +18,6 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import Svg, { Path } from 'react-native-svg';
-import { oauthRedirectUrl } from '../utils/oauth';
 
 // Colors match the welcome screen (src/app/index.jsx)
 const C = {
@@ -39,52 +38,44 @@ function getClerkErrorMessage(error) {
   return first?.longMessage || first?.message || 'Something went wrong. Please try again.';
 }
 
-// Preloads the browser for Android devices to reduce SSO load time.
-// See: https://docs.expo.dev/guides/authentication/#improving-user-experience
-function useWarmUpBrowser() {
-  useEffect(() => {
-    if (Platform.OS !== 'android') return;
-    void WebBrowser.warmUpAsync();
-    return () => {
-      void WebBrowser.coolDownAsync();
-    };
-  }, []);
-}
-WebBrowser.maybeCompleteAuthSession();
-
-function GoogleGlyph() {
+// Small branded header shown above the main sign-in/sign-up forms.
+function BrandHeader() {
   return (
-    <Svg width={18} height={18} viewBox="0 0 48 48">
-      <Path
-        fill="#FFC107"
-        d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z"
-      />
-      <Path
-        fill="#FF3D00"
-        d="M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 16.318 4 9.656 8.337 6.306 14.691z"
-      />
-      <Path
-        fill="#4CAF50"
-        d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238C29.211 35.091 26.715 36 24 36c-5.202 0-9.619-3.317-11.283-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44z"
-      />
-      <Path
-        fill="#1976D2"
-        d="M43.611 20.083H42V20H24v8h11.303a12.04 12.04 0 0 1-4.087 5.571l.003-.002 6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z"
-      />
-    </Svg>
+    <View className="mb-8 flex-row items-center">
+      <LinearGradient
+        colors={['#1F2937', '#000000']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' }}
+      >
+        <Image
+          source={require('../../../assets/images/logo.png')}
+          style={{ width: 26, height: 26 }}
+          resizeMode="contain"
+        />
+      </LinearGradient>
+      <Text className="ml-3 text-lg font-semibold text-[#0F172A]">Preven</Text>
+    </View>
+  );
+}
+
+// Footer shown at the bottom of the main sign-in/sign-up forms.
+function BrandFooter() {
+  return (
+    <Text className="mt-auto pt-8 text-center text-xs tracking-wide text-[#94A3B8]">
+      Powered by Netech
+    </Text>
   );
 }
 
 export default function SignUp() {
   const router = useRouter();
-  useWarmUpBrowser();
   const [fontsLoaded] = useFonts({ Fraunces_500Medium, Manrope_500Medium, Manrope_700Bold });
   const displayFont = fontsLoaded ? 'font-[Fraunces_500Medium]' : 'font-serif';
   const bodyFont = fontsLoaded ? 'font-[Manrope_500Medium]' : '';
   const boldFont = fontsLoaded ? 'font-[Manrope_700Bold]' : 'font-bold';
 
   const { signUp, errors: signUpErrors, fetchStatus } = useSignUp();
-  const { startSSOFlow } = useSSO();
 
   // 'form' -> collect details, 'verify' -> email verification code
   // (Clerk requires email verification at sign-up before the account is complete)
@@ -101,9 +92,8 @@ export default function SignUp() {
   const [formError, setFormError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [resending, setResending] = useState(false);
-  const [googleSubmitting, setGoogleSubmitting] = useState(false);
 
-  const busy = submitting || googleSubmitting || fetchStatus === 'fetching';
+  const busy = submitting || fetchStatus === 'fetching';
 
   const clearFieldError = (field) => {
     setFieldErrors((prev) => (prev[field] ? { ...prev, [field]: undefined } : prev));
@@ -202,31 +192,6 @@ export default function SignUp() {
     }
   };
 
-  const handleGoogleSignUp = async () => {
-    setFormError('');
-    setGoogleSubmitting(true);
-    try {
-      const { createdSessionId, setActive } = await startSSOFlow({
-        strategy: 'oauth_google',
-        redirectUrl: oauthRedirectUrl,
-      });
-      if (createdSessionId && setActive) {
-        // AppShell's effect handles the redirect once isSignedIn flips —
-        // don't also navigate here (see note in finalizeAndEnter above).
-        await setActive({ session: createdSessionId });
-      }
-      // No createdSessionId and no error thrown almost always means the
-      // user closed the browser sheet themselves — don't surface an error.
-    } catch (error) {
-      // Log the raw error for debugging on native, where the message shown
-      // to the user is often a generic fallback.
-      console.error('[Google sign-up]', error);
-      setFormError(getClerkErrorMessage(error));
-    } finally {
-      setGoogleSubmitting(false);
-    }
-  };
-
   if (step === 'verify') {
     return (
       <View className="flex-1 bg-white">
@@ -237,7 +202,7 @@ export default function SignUp() {
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
             >
-              <View className="flex-1 px-8 pb-8 pt-6">
+              <View className="px-8 pb-8 pt-6">
                 <Text className={`${displayFont} text-3xl text-[#0F172A]`}>Verify your email</Text>
                 <Text className={`${bodyFont} mt-2 text-base text-[#64748B]`}>
                   We sent a verification code to {email.trim()}.
@@ -303,7 +268,8 @@ export default function SignUp() {
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
-            <View className="flex-1 px-8 pb-8 pt-6">
+            <View className="px-8 pb-8 pt-6">
+              <BrandHeader />
               <View className="mb-10">
                 <Text className={`${displayFont} text-3xl text-[#0F172A]`}>Create account</Text>
                 <Text className={`${bodyFont} mt-2 text-base text-[#64748B]`}>
@@ -316,34 +282,6 @@ export default function SignUp() {
                   <Text className={`${bodyFont} text-sm text-[#E11D48]`}>{formError}</Text>
                 </View>
               ) : null}
-
-              {/* Google sign-up */}
-              <Pressable
-                onPress={handleGoogleSignUp}
-                disabled={googleSubmitting || submitting}
-                className={`w-full flex-row items-center justify-center rounded-2xl py-4 active:opacity-70 ${googleSubmitting ? 'opacity-60' : ''}`}
-                style={{ borderWidth: 1, borderColor: C.border, backgroundColor: C.surface }}
-              >
-                {googleSubmitting ? (
-                  <ActivityIndicator color={C.text} />
-                ) : (
-                  <View className="flex-row items-center">
-                    <GoogleGlyph />
-                    <Text className={`${bodyFont} ml-3 text-base text-[#0F172A]`}>
-                      Sign up with Google
-                    </Text>
-                  </View>
-                )}
-              </Pressable>
-
-              {/* Divider */}
-              <View className="my-6 flex-row items-center">
-                <View className="h-[1px] flex-1" style={{ backgroundColor: C.border }} />
-                <Text className={`${bodyFont} mx-3 text-xs uppercase tracking-widest text-[#94A3B8]`}>
-                  or
-                </Text>
-                <View className="h-[1px] flex-1" style={{ backgroundColor: C.border }} />
-              </View>
 
               {/* Full name */}
               <View className="mb-4">
@@ -521,6 +459,8 @@ export default function SignUp() {
                   <Text className={`${boldFont} text-sm text-[#0F172A]`}>Sign in</Text>
                 </Pressable>
               </View>
+
+              <BrandFooter />
             </View>
           </ScrollView>
         </SafeAreaView>
