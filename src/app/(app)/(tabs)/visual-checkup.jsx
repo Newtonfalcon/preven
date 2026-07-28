@@ -1,8 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, RefreshControl, ScrollView, Text, TouchableOpacity, View } from 'react-native';
+import { RefreshControl, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import BrandLoader from '../../../components/BrandLoader';
 import { useApi } from '../../../context/ApiContext';
 
 // Maps the backend's free-text trend status into a consistent badge color.
@@ -81,10 +82,7 @@ export default function SummaryScreen() {
       </View>
 
       {isLoading ? (
-        <View className="flex-1 items-center justify-center">
-          <ActivityIndicator size="large" color="#0F172A" />
-          <Text className="text-slate-400 text-xs mt-3">Analyzing your tracking history…</Text>
-        </View>
+        <BrandLoader message="Analyzing your tracking history…" />
       ) : status === 'empty' ? (
         <View className="flex-1 items-center justify-center px-8">
           <View className="w-16 h-16 rounded-full bg-white border border-slate-100 items-center justify-center mb-4">
@@ -118,7 +116,7 @@ export default function SummaryScreen() {
       ) : (
         <ScrollView
           className="flex-1 px-5"
-          contentContainerStyle={{ paddingBottom: insets.bottom + 40 }}
+          contentContainerStyle={{ paddingBottom: insets.bottom + 130 }}
           refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor="#0F172A" />}
         >
           {/* Trend status + scan count */}

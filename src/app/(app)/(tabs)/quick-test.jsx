@@ -1,9 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import { File } from 'expo-file-system';
+import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import { useState } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   Image,
   KeyboardAvoidingView,
@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import Markdown from 'react-native-markdown-display';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import BrandLoader from '../../../components/BrandLoader';
 import { useApi } from '../../../context/ApiContext';
 import markdownStyles from '../../../utils/markdownStyles';
 
@@ -42,8 +43,7 @@ export default function QuickTestScreen() {
     });
 
     if (!result.canceled) {
-      setImage(result.assets[0].uri);
-      setAnalysisResult(null); // Clear previous runs
+      await handlePickedAsset(result.assets[0].uri);
     }
   };
 
@@ -61,8 +61,35 @@ export default function QuickTestScreen() {
     });
 
     if (!result.canceled) {
-      setImage(result.assets[0].uri);
-      setAnalysisResult(null);
+      await handlePickedAsset(result.assets[0].uri);
+    }
+  };
+
+  // Modern phone cameras can produce very large photos (many MB, 12MP+),
+  // which have been known to cause native out-of-memory crashes on Android
+  // when held in memory for preview/upload with no downscaling at all.
+  // Resizing to a sane max dimension keeps plenty of detail for structural
+  // analysis while drastically cutting memory pressure and upload size.
+  //
+  // IMPORTANT: if resize fails, we do NOT fall back to the original,
+  // full-size image — that would silently reintroduce the exact crash
+  // risk this step exists to prevent. We surface a clear error instead
+  // and leave the picker empty so the user can retry.
+  const handlePickedAsset = async (rawUri) => {
+    try {
+      const manipulated = await ImageManipulator.manipulateAsync(
+        rawUri,
+        [{ resize: { width: 1600 } }],
+        { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG }
+      );
+      setImage(manipulated.uri);
+      setAnalysisResult(null); // Clear previous runs
+    } catch (resizeError) {
+      console.error('[Quick Test] Image resize failed:', resizeError);
+      Alert.alert(
+        'Photo Not Usable',
+        'That photo could not be processed. Please try taking or selecting it again.'
+      );
     }
   };
 
@@ -80,7 +107,21 @@ export default function QuickTestScreen() {
       // only accepts real Blob/File parts — the old React Native shorthand
       // { uri, name, type } throws "Unsupported FormDataPart implementation".
       // expo-file-system's File wraps the local uri as a proper Blob.
-      const file = new File(image);
+      //
+      // expo-image-picker normally returns a file:// URI, but some Android
+      // OEM camera intents have been known to omit the scheme — File's
+      // native validatePath() rejects anything that isn't a proper
+      // file:///content:// URI, so normalize defensively before using it.
+      const fileUri = /^[a-zA-Z]+:\/\//.test(image) ? image : `file://${image}`;
+
+      let file;
+      try {
+        file = new File(fileUri);
+      } catch (fileError) {
+        console.error('[Quick Test] Could not reference scan image file:', fileError);
+        throw new Error('Could not read the selected photo. Please retake or reselect it.');
+      }
+
       formData.append('photo', file, file.name || 'scan.jpg');
       if (symptomContext.trim()) {
         formData.append('notes', symptomContext.trim());
@@ -97,6 +138,7 @@ export default function QuickTestScreen() {
         summaryMarkdown: response.data.summaryMarkdown,
       });
     } catch (error) {
+      console.error('[Quick Test] Analysis failed:', error);
       Alert.alert('Analysis Failed', error.message || 'Something went wrong while processing your scan.');
     } finally {
       setIsAnalyzing(false);
@@ -205,7 +247,7 @@ export default function QuickTestScreen() {
           {/* Loading */}
           {isAnalyzing && (
             <View className="w-full bg-white border border-slate-100 p-6 rounded-3xl items-center shadow-sm">
-              <ActivityIndicator size="large" color="#0F172A" />
+              <BrandLoader fullScreen={false} size={72} message={null} />
               <Text className="text-slate-800 font-bold text-base mt-4">Analyzing your scan…</Text>
               <Text className="text-slate-400 text-xs text-center mt-1">
                 Uploading your photo and generating a structural read-out.

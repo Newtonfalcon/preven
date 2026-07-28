@@ -1,7 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useCallback, useEffect, useState } from 'react';
 import {
-  ActivityIndicator,
   RefreshControl,
   ScrollView,
   Text,
@@ -11,11 +10,13 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Markdown from 'react-native-markdown-display';
 import { useApi } from '../../../context/ApiContext';
+import BrandLoader from '../../../components/BrandLoader';
 import markdownStyles, { stripMarkdown } from '../../../utils/markdownStyles';
 
 const CARD_WIDTH = 168;
 
-
+// Maps the backend's free-text trend status into a consistent badge color —
+// same convention used on the Progress Summary screen.
 function trendStyles(status = '') {
   const normalized = status.toLowerCase();
   if (normalized.includes('flag')) {
@@ -114,9 +115,7 @@ export default function HealthProfileScreen() {
       </View>
 
       {isLoadingLogs ? (
-        <View className="flex-1 items-center justify-center">
-          <ActivityIndicator size="large" color="#0F172A" />
-        </View>
+        <BrandLoader message="Loading your records…" />
       ) : logsError ? (
         <View className="flex-1 items-center justify-center px-8">
           <View className="w-16 h-16 rounded-full bg-white border border-slate-100 items-center justify-center mb-4">
@@ -217,7 +216,7 @@ export default function HealthProfileScreen() {
           >
             {isLoadingDetail ? (
               <View className="items-center justify-center py-16">
-                <ActivityIndicator size="large" color="#0F172A" />
+                <BrandLoader fullScreen={false} size={72} message={null} />
               </View>
             ) : detailError ? (
               <View className="items-center justify-center py-16 px-4">
