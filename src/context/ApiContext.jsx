@@ -1,10 +1,11 @@
 import React, { createContext, useContext, useMemo } from 'react';
 import { useAuth } from '@clerk/expo';
+import { File, UploadType } from 'expo-file-system';
 
 const ApiContext = createContext(null);
 
 // Replace with your backend URL (or process.env.EXPO_PUBLIC_API_URL)
-const API_BASE_URL = 'http://172.28.25.150:3000/api/v1';
+const API_BASE_URL = 'https://preven-backend.vercel.app/api/v1';
 
 export function ApiProvider({ children }) {
   const { getToken } = useAuth();
@@ -40,6 +41,50 @@ export function ApiProvider({ children }) {
       }
     };
 
+    // Uploads a local file directly from disk to the server using
+    // expo-file-system's native UploadTask, instead of reading the file
+    // into a JS Blob/FormData and passing it through fetch. The native
+    // task streams bytes straight from disk to the network without ever
+    // holding the whole file in JS/bridge memory, which is significantly
+    // safer for large images (camera photos can be tens of MB) than the
+    // FormData + fetch path.
+    const uploadFile = async (endpoint, fileUri, { fieldName = 'photo', parameters = {}, mimeType = 'image/jpeg' } = {}) => {
+      try {
+        const token = await getToken();
+        const file = new File(fileUri);
+
+        const result = await file.upload(`${API_BASE_URL}${endpoint}`, {
+          httpMethod: 'POST',
+          uploadType: UploadType.MULTIPART,
+          fieldName,
+          mimeType,
+          parameters,
+          headers: {
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+        });
+
+        if (result.status < 200 || result.status >= 300) {
+          let parsedError;
+          try {
+            parsedError = JSON.parse(result.body);
+          } catch {
+            // Response body wasn't JSON — fall through to the generic message below.
+          }
+          throw new Error(parsedError?.error || `HTTP error ${result.status}`);
+        }
+
+        try {
+          return { data: JSON.parse(result.body) };
+        } catch {
+          throw new Error('Received an unexpected response from the server.');
+        }
+      } catch (error) {
+        console.error(`[API Upload Error] ${endpoint}:`, error.message);
+        throw error;
+      }
+    };
+
     return {
       get: (endpoint, options) => request(endpoint, { ...options, method: 'GET' }),
       post: (endpoint, body, options) => {
@@ -59,6 +104,7 @@ export function ApiProvider({ children }) {
         });
       },
       delete: (endpoint, options) => request(endpoint, { ...options, method: 'DELETE' }),
+      uploadFile,
     };
   }, [getToken]);
 

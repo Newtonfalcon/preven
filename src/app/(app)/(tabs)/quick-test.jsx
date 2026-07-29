@@ -1,5 +1,4 @@
 import { Ionicons } from '@expo/vector-icons';
-import { File } from 'expo-file-system';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import { useState } from 'react';
@@ -20,34 +19,61 @@ import BrandLoader from '../../../components/BrandLoader';
 import { useApi } from '../../../context/ApiContext';
 import markdownStyles from '../../../utils/markdownStyles';
 
+// Max dimension (px, long edge) a captured/picked photo is downscaled to
+// before it's ever previewed or uploaded. Modern phone cameras can produce
+// 12-108MP photos — decoding one of those into memory to resize it can
+// itself require hundreds of MB to 1GB+, which is well past what many
+// Android devices allow a single app process, and causes a native
+// out-of-memory crash that no JS try/catch can intercept. Keeping this
+// conservative (rather than e.g. 1600px) leaves a wide safety margin while
+// still preserving plenty of detail for structural analysis.
+const MAX_IMAGE_DIMENSION = 1400;
+const IMAGE_COMPRESSION = 0.7;
+
 export default function QuickTestScreen() {
   const api = useApi();
   const insets = useSafeAreaInsets();
+
   const [image, setImage] = useState(null);
+  const [isPreparingImage, setIsPreparingImage] = useState(false);
   const [symptomContext, setSymptomContext] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState(null);
 
-  // Native Photo Library Picker
-  const pickImage = async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission Denied', 'We need access to your photos to process diagnostic scans.');
-      return;
-    }
+  const resetScan = () => {
+    setImage(null);
+    setAnalysisResult(null);
+    setSymptomContext('');
+  };
 
-    let result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      quality: 0.8,
-    });
-
-    if (!result.canceled) {
-      await handlePickedAsset(result.assets[0].uri);
+  // Takes whatever URI expo-image-picker handed back and produces a safe,
+  // downscaled photo before it's ever held in memory for preview or upload.
+  //
+  // Deliberately does NOT fall back to the original, full-size image if
+  // resizing fails for any reason — that would silently reintroduce the
+  // exact memory-pressure risk this step exists to prevent. A clear,
+  // catchable error is far better than an invisible native crash.
+  const prepareAndSetImage = async (rawUri) => {
+    setIsPreparingImage(true);
+    try {
+      const manipulated = await ImageManipulator.manipulateAsync(
+        rawUri,
+        [{ resize: { width: MAX_IMAGE_DIMENSION } }],
+        { compress: IMAGE_COMPRESSION, format: ImageManipulator.SaveFormat.JPEG }
+      );
+      setImage(manipulated.uri);
+      setAnalysisResult(null);
+    } catch (error) {
+      console.error('[Quick Test] Image processing failed:', error);
+      Alert.alert(
+        'Photo Not Usable',
+        'That photo could not be processed. Please try taking or selecting it again.'
+      );
+    } finally {
+      setIsPreparingImage(false);
     }
   };
 
-  // Native Hardware Camera Picker
   const takePhoto = async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== 'granted') {
@@ -55,87 +81,77 @@ export default function QuickTestScreen() {
       return;
     }
 
-    let result = await ImagePicker.launchCameraAsync({
-      allowsEditing: true,
-      quality: 0.8,
-    });
-
-    if (!result.canceled) {
-      await handlePickedAsset(result.assets[0].uri);
-    }
-  };
-
-  // Modern phone cameras can produce very large photos (many MB, 12MP+),
-  // which have been known to cause native out-of-memory crashes on Android
-  // when held in memory for preview/upload with no downscaling at all.
-  // Resizing to a sane max dimension keeps plenty of detail for structural
-  // analysis while drastically cutting memory pressure and upload size.
-  //
-  // IMPORTANT: if resize fails, we do NOT fall back to the original,
-  // full-size image — that would silently reintroduce the exact crash
-  // risk this step exists to prevent. We surface a clear error instead
-  // and leave the picker empty so the user can retry.
-  const handlePickedAsset = async (rawUri) => {
+    let result;
     try {
-      const manipulated = await ImageManipulator.manipulateAsync(
-        rawUri,
-        [{ resize: { width: 1600 } }],
-        { compress: 0.8, format: ImageManipulator.SaveFormat.JPEG }
-      );
-      setImage(manipulated.uri);
-      setAnalysisResult(null); // Clear previous runs
-    } catch (resizeError) {
-      console.error('[Quick Test] Image resize failed:', resizeError);
-      Alert.alert(
-        'Photo Not Usable',
-        'That photo could not be processed. Please try taking or selecting it again.'
-      );
+      result = await ImagePicker.launchCameraAsync({ allowsEditing: true, quality: 0.8 });
+    } catch (error) {
+      console.error('[Quick Test] Camera launch failed:', error);
+      Alert.alert('Camera Error', 'Could not open the camera. Please try again.');
+      return;
+    }
+
+    if (!result.canceled && result.assets?.[0]?.uri) {
+      await prepareAndSetImage(result.assets[0].uri);
     }
   };
 
+  const pickImage = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Denied', 'We need access to your photos to process diagnostic scans.');
+      return;
+    }
+
+    let result;
+    try {
+      result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.8,
+      });
+    } catch (error) {
+      console.error('[Quick Test] Photo library launch failed:', error);
+      Alert.alert('Library Error', 'Could not open your photo library. Please try again.');
+      return;
+    }
+
+    if (!result.canceled && result.assets?.[0]?.uri) {
+      await prepareAndSetImage(result.assets[0].uri);
+    }
+  };
+
+  // Uploads the already-downscaled photo directly from disk using
+  // expo-file-system's native streaming upload (api.uploadFile), rather
+  // than reading the whole file into a JS Blob/FormData and passing it
+  // through fetch. The native task streams bytes straight from disk to
+  // the network without ever holding the full file in JS/bridge memory —
+  // a meaningfully safer path for large images than FormData + fetch.
   const runDiagnosticAnalysis = async () => {
     if (!image) {
-      Alert.alert('Missing Asset', 'Please take or upload a scan image before running analysis.');
+      Alert.alert('Missing Photo', 'Please take or upload a scan image before running analysis.');
       return;
     }
 
     setIsAnalyzing(true);
-
     try {
-      const formData = new FormData();
-      // SDK 57+ makes expo/fetch the global fetch on native, and its FormData
-      // only accepts real Blob/File parts — the old React Native shorthand
-      // { uri, name, type } throws "Unsupported FormDataPart implementation".
-      // expo-file-system's File wraps the local uri as a proper Blob.
-      //
-      // expo-image-picker normally returns a file:// URI, but some Android
-      // OEM camera intents have been known to omit the scheme — File's
-      // native validatePath() rejects anything that isn't a proper
-      // file:///content:// URI, so normalize defensively before using it.
-      const fileUri = /^[a-zA-Z]+:\/\//.test(image) ? image : `file://${image}`;
+      const response = await api.uploadFile('/scan', image, {
+        fieldName: 'photo',
+        mimeType: 'image/jpeg',
+        parameters: symptomContext.trim() ? { notes: symptomContext.trim() } : {},
+      });
 
-      let file;
-      try {
-        file = new File(fileUri);
-      } catch (fileError) {
-        console.error('[Quick Test] Could not reference scan image file:', fileError);
-        throw new Error('Could not read the selected photo. Please retake or reselect it.');
+      const data = response?.data;
+      if (!data) {
+        throw new Error('Received an empty response from the server.');
       }
-
-      formData.append('photo', file, file.name || 'scan.jpg');
-      if (symptomContext.trim()) {
-        formData.append('notes', symptomContext.trim());
-      }
-
-      const response = await api.post('/scan', formData);
 
       setAnalysisResult({
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        trackingStatus: response.data.trackingStatus,
-        asymmetryScore: response.data.asymmetryScore,
-        borderProfile: response.data.borderProfile,
-        estimatedDiameterMm: response.data.estimatedDiameterMm,
-        summaryMarkdown: response.data.summaryMarkdown,
+        trackingStatus: data.trackingStatus,
+        asymmetryScore: data.asymmetryScore,
+        borderProfile: data.borderProfile,
+        estimatedDiameterMm: data.estimatedDiameterMm,
+        summaryMarkdown: data.summaryMarkdown,
       });
     } catch (error) {
       console.error('[Quick Test] Analysis failed:', error);
@@ -144,6 +160,8 @@ export default function QuickTestScreen() {
       setIsAnalyzing(false);
     }
   };
+
+  const busy = isPreparingImage || isAnalyzing;
 
   return (
     <KeyboardAvoidingView
@@ -175,11 +193,16 @@ export default function QuickTestScreen() {
 
           {/* Image Dropzone */}
           <View className="bg-white border border-slate-100 p-4 rounded-3xl shadow-sm mb-5 items-center justify-center">
-            {image ? (
+            {isPreparingImage ? (
+              <View className="w-full h-56 items-center justify-center">
+                <BrandLoader fullScreen={false} size={64} message="Preparing your photo…" />
+              </View>
+            ) : image ? (
               <View className="w-full">
                 <Image source={{ uri: image }} className="w-full h-64 rounded-2xl bg-slate-100" resizeMode="cover" />
                 <TouchableOpacity
-                  onPress={() => setImage(null)}
+                  onPress={resetScan}
+                  disabled={busy}
                   className="absolute top-3 right-3 w-8 h-8 bg-slate-900/80 rounded-full items-center justify-center"
                 >
                   <Ionicons name="trash-outline" size={16} color="white" />
@@ -198,7 +221,8 @@ export default function QuickTestScreen() {
             <View className="flex-row w-full mt-4">
               <TouchableOpacity
                 onPress={takePhoto}
-                className="flex-1 h-12 bg-black rounded-xl flex-row items-center justify-center mr-2"
+                disabled={busy}
+                className={`flex-1 h-12 bg-black rounded-xl flex-row items-center justify-center mr-2 ${busy ? 'opacity-50' : ''}`}
               >
                 <Ionicons name="camera-outline" size={18} color="white" />
                 <Text className="text-white font-semibold text-sm ml-2">Use Camera</Text>
@@ -206,7 +230,8 @@ export default function QuickTestScreen() {
 
               <TouchableOpacity
                 onPress={pickImage}
-                className="flex-1 h-12 bg-white border border-slate-200 rounded-xl flex-row items-center justify-center"
+                disabled={busy}
+                className={`flex-1 h-12 bg-white border border-slate-200 rounded-xl flex-row items-center justify-center ${busy ? 'opacity-50' : ''}`}
               >
                 <Ionicons name="images-outline" size={18} color="#0F172A" />
                 <Text className="text-slate-700 font-semibold text-sm ml-2">Browse Files</Text>
@@ -230,6 +255,7 @@ export default function QuickTestScreen() {
               textAlignVertical="top"
               returnKeyType="done"
               blurOnSubmit
+              editable={!busy}
               className="w-full bg-slate-50 border border-slate-200 text-slate-800 rounded-xl px-4 py-3 text-sm h-20"
             />
           </View>
@@ -238,7 +264,8 @@ export default function QuickTestScreen() {
           {!analysisResult && !isAnalyzing && (
             <TouchableOpacity
               onPress={runDiagnosticAnalysis}
-              className="w-full h-14 bg-black rounded-2xl items-center justify-center"
+              disabled={isPreparingImage}
+              className={`w-full h-14 bg-black rounded-2xl items-center justify-center ${isPreparingImage ? 'opacity-50' : ''}`}
             >
               <Text className="text-white font-bold text-base tracking-wide">Run Analysis</Text>
             </TouchableOpacity>
@@ -272,13 +299,15 @@ export default function QuickTestScreen() {
                 <View className="flex-1 bg-slate-50 p-4 rounded-2xl border border-slate-100 mr-2">
                   <Text className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Asymmetry Score</Text>
                   <Text className="text-2xl font-black text-slate-900 mt-0.5">
-                    {(analysisResult.asymmetryScore * 100).toFixed(0)}%
+                    {typeof analysisResult.asymmetryScore === 'number'
+                      ? `${(analysisResult.asymmetryScore * 100).toFixed(0)}%`
+                      : '—'}
                   </Text>
                 </View>
                 <View className="flex-1 bg-slate-50 p-4 rounded-2xl border border-slate-100">
                   <Text className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Est. Diameter</Text>
                   <Text className="text-2xl font-black text-slate-900 mt-0.5">
-                    {analysisResult.estimatedDiameterMm}mm
+                    {analysisResult.estimatedDiameterMm != null ? `${analysisResult.estimatedDiameterMm}mm` : '—'}
                   </Text>
                 </View>
               </View>
@@ -292,11 +321,7 @@ export default function QuickTestScreen() {
               <Markdown style={markdownStyles}>{analysisResult.summaryMarkdown || '—'}</Markdown>
 
               <TouchableOpacity
-                onPress={() => {
-                  setImage(null);
-                  setAnalysisResult(null);
-                  setSymptomContext('');
-                }}
+                onPress={resetScan}
                 className="w-full h-11 bg-slate-50 border border-slate-200 rounded-xl mt-6 items-center justify-center"
               >
                 <Text className="text-slate-600 font-semibold text-xs">Clear Results & Scan Again</Text>
