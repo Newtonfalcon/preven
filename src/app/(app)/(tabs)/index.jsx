@@ -1,6 +1,7 @@
 import { useUser } from '@clerk/expo';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { useMemo } from 'react';
 import { Image, ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -32,12 +33,23 @@ const QUICK_TEST_STEPS = [
   },
 ];
 
+// Every route here is a real, registered screen — the previous version
+// linked to "/(app)/summary", which doesn't exist as a route and would
+// throw a navigation error if tapped.
 const QUICK_LINKS = [
-  { label: 'Visual Checkup', route: '/(app)/(tabs)/visual-checkup', icon: 'camera-sharp' },
-  { label: 'Health Profile', route: '/(app)/(tabs)/health-profile', icon: 'person-sharp' },
-  { label: 'Progress Summary', route: '/(app)/summary', icon: 'bar-chart-sharp' },
-  { label: 'Settings', route: '/(app)/(tabs)/settings', icon: 'settings-sharp' },
+  { label: 'Progress Summary', description: 'Trends over time', route: '/(app)/(tabs)/visual-checkup', icon: 'bar-chart-sharp' },
+  { label: 'Health Profile', description: 'Your scan history', route: '/(app)/(tabs)/health-profile', icon: 'person-sharp' },
+  { label: 'Quick Test', description: 'Run a new scan', route: '/(app)/(tabs)/quick-test', icon: 'flask-sharp' },
+  { label: 'Settings', description: 'Account & preferences', route: '/(app)/(tabs)/settings', icon: 'settings-sharp' },
 ];
+
+function getGreeting() {
+  const hour = new Date().getHours();
+  if (hour < 5) return 'Good night';
+  if (hour < 12) return 'Good morning';
+  if (hour < 18) return 'Good afternoon';
+  return 'Good evening';
+}
 
 export default function HomeScreen() {
   const { user, isLoaded } = useUser();
@@ -45,49 +57,87 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
 
   const firstName = user?.firstName || user?.username || 'there';
-  const email = user?.primaryEmailAddress?.emailAddress;
   const avatarUrl = user?.imageUrl;
+  const greeting = useMemo(() => getGreeting(), []);
 
   return (
     <SafeAreaView className="flex-1 bg-slate-50" edges={['top', 'left', 'right']}>
       <ScrollView
         className="flex-1 px-5"
-        contentContainerStyle={{ paddingTop: 8, paddingBottom: insets.bottom + 130 }}
+        contentContainerStyle={{ paddingTop: 12, paddingBottom: insets.bottom + 130 }}
+        showsVerticalScrollIndicator={false}
       >
-        {/* User data card */}
-        <View className="bg-white border border-slate-100 rounded-3xl p-5 mb-4 flex-row items-center">
-          {avatarUrl ? (
-            <Image source={{ uri: avatarUrl }} className="w-14 h-14 rounded-full mr-4" />
-          ) : (
-            <View className="w-14 h-14 rounded-full bg-slate-100 items-center justify-center mr-4">
-              <Ionicons name="person" size={22} color="#94A3B8" />
-            </View>
-          )}
-          <View className="flex-1">
-            <Text className="text-slate-400 text-xs font-medium">Welcome back</Text>
-            <Text className="text-slate-900 text-lg font-bold mt-0.5" numberOfLines={1}>
+        {/* Header — time-aware greeting, tap avatar to reach settings */}
+        <View className="flex-row items-center justify-between mb-5">
+          <View className="flex-1 pr-3">
+            <Text className="text-slate-400 text-xs font-medium">{greeting}</Text>
+            <Text className="text-slate-900 text-2xl font-black tracking-tight mt-0.5" numberOfLines={1}>
               {isLoaded ? firstName : '…'}
             </Text>
-            {email ? (
-              <Text className="text-slate-400 text-xs mt-0.5" numberOfLines={1}>
-                {email}
-              </Text>
-            ) : null}
+          </View>
+          <TouchableOpacity onPress={() => router.push('/(app)/(tabs)/settings')} activeOpacity={0.8}>
+            {avatarUrl ? (
+              <Image source={{ uri: avatarUrl }} className="w-12 h-12 rounded-full border border-slate-100" />
+            ) : (
+              <View className="w-12 h-12 rounded-full bg-white border border-slate-100 items-center justify-center">
+                <Ionicons name="person" size={20} color="#94A3B8" />
+              </View>
+            )}
+          </TouchableOpacity>
+        </View>
+
+        {/* Primary CTA — the app's core action, given real visual weight */}
+        <TouchableOpacity
+          onPress={() => router.push('/(app)/(tabs)/quick-test')}
+          activeOpacity={0.9}
+          className="bg-black rounded-3xl p-6 mb-4 overflow-hidden"
+        >
+          <View className="w-11 h-11 rounded-2xl bg-white/10 items-center justify-center mb-4">
+            <Ionicons name="flask-sharp" size={20} color="#FFFFFF" />
+          </View>
+          <Text className="text-white text-xl font-black tracking-tight">Run a Quick Test</Text>
+          <Text className="text-slate-400 text-sm mt-1.5 leading-5" style={{ maxWidth: 260 }}>
+            Photograph a spot and get a structural read-out — asymmetry, border, and size — in seconds.
+          </Text>
+          <View className="flex-row items-center mt-4">
+            <Text className="text-white text-sm font-semibold">Get started</Text>
+            <Ionicons name="arrow-forward" size={14} color="#FFFFFF" style={{ marginLeft: 6 }} />
+          </View>
+        </TouchableOpacity>
+
+        {/* Clinical framing / trust banner — sets a healthcare tone, not a diagnosis */}
+        <View className="bg-white border border-slate-100 rounded-3xl p-5 mb-4 flex-row items-start">
+          <View className="w-9 h-9 rounded-full bg-emerald-50 items-center justify-center mr-3 mt-0.5">
+            <Ionicons name="shield-checkmark" size={16} color="#10B981" />
+          </View>
+          <View className="flex-1">
+            <Text className="text-slate-900 text-xs font-bold tracking-widest uppercase mb-1">
+              Structured tracking, not a diagnosis
+            </Text>
+            <Text className="text-slate-500 text-sm leading-5">
+              Preven records consistent, structured measurements over time so you and your doctor have a
+              clear picture of change — it doesn't replace professional medical evaluation.
+            </Text>
           </View>
         </View>
 
-        {/* Clinical framing / trust banner — sets a healthcare tone, not a diagnosis */}
-        <View className="bg-black rounded-3xl p-5 mb-4">
-          <View className="flex-row items-center mb-2">
-            <Ionicons name="shield-checkmark" size={16} color="#34D399" />
-            <Text className="text-white text-[11px] font-bold ml-2 tracking-widest">
-              STRUCTURED TRACKING, NOT A DIAGNOSIS
-            </Text>
-          </View>
-          <Text className="text-slate-300 text-sm leading-5">
-            Preven records consistent, structured measurements over time so you and your doctor have a
-            clear picture of change — it doesn't replace professional medical evaluation.
-          </Text>
+        {/* Explore — every destination is a real, valid route */}
+        <Text className="text-slate-900 font-bold text-sm mb-3">Explore</Text>
+        <View className="flex-row flex-wrap justify-between mb-4">
+          {QUICK_LINKS.map((link) => (
+            <TouchableOpacity
+              key={link.route}
+              onPress={() => router.push(link.route)}
+              activeOpacity={0.8}
+              className="w-[48%] bg-white border border-slate-100 rounded-2xl p-4 mb-3"
+            >
+              <View className="w-10 h-10 rounded-full bg-slate-50 items-center justify-center mb-3">
+                <Ionicons name={link.icon} size={18} color="#0F172A" />
+              </View>
+              <Text className="text-slate-900 text-sm font-semibold">{link.label}</Text>
+              <Text className="text-slate-400 text-xs mt-0.5" numberOfLines={1}>{link.description}</Text>
+            </TouchableOpacity>
+          ))}
         </View>
 
         {/* How to run a Quick Test */}
@@ -95,8 +145,11 @@ export default function HomeScreen() {
           <Text className="text-slate-900 font-bold text-sm mb-1">How to Get the Best Results</Text>
           <Text className="text-slate-400 text-xs mb-4">Five habits for accurate tracking and trend summaries</Text>
 
-          {QUICK_TEST_STEPS.map((step) => (
-            <View key={step.title} className="flex-row items-start mb-3">
+          {QUICK_TEST_STEPS.map((step, i) => (
+            <View
+              key={step.title}
+              className={`flex-row items-start pb-3 mb-3 ${i === QUICK_TEST_STEPS.length - 1 ? '' : 'border-b border-slate-50'}`}
+            >
               <View className="w-8 h-8 rounded-full bg-slate-100 items-center justify-center mr-3 mt-0.5">
                 <Ionicons name={step.icon} size={16} color="#0F172A" />
               </View>
@@ -109,32 +162,12 @@ export default function HomeScreen() {
 
           <TouchableOpacity
             onPress={() => router.push('/(app)/(tabs)/quick-test')}
-            className="mt-2 h-12 bg-black rounded-full items-center justify-center flex-row"
+            activeOpacity={0.85}
+            className="mt-1 h-12 bg-black rounded-full items-center justify-center flex-row"
           >
             <Ionicons name="flask-sharp" size={16} color="white" style={{ marginRight: 8 }} />
             <Text className="text-white font-semibold text-sm">Start Quick Test</Text>
           </TouchableOpacity>
-        </View>
-
-        {/* Quick links to other screens */}
-        <Text className="text-slate-900 font-bold text-sm mb-3">Explore</Text>
-        <View className="flex-row flex-wrap justify-between">
-          {QUICK_LINKS.map((link) => (
-            <TouchableOpacity
-              key={link.route}
-              onPress={() => router.push(link.route)}
-              className="w-[48%] bg-white border border-slate-100 rounded-2xl p-4 mb-3 items-start"
-            >
-              <View className="w-10 h-10 rounded-full bg-slate-50 items-center justify-center mb-3">
-                <Ionicons name={link.icon} size={18} color="#0F172A" />
-              </View>
-              <Text className="text-slate-900 text-sm font-semibold">{link.label}</Text>
-              <View className="flex-row items-center mt-1">
-                <Text className="text-slate-400 text-xs mr-1">Open</Text>
-                <Ionicons name="arrow-forward" size={12} color="#94A3B8" />
-              </View>
-            </TouchableOpacity>
-          ))}
         </View>
       </ScrollView>
     </SafeAreaView>

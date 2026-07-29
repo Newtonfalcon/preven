@@ -5,7 +5,7 @@ import { File, UploadType } from 'expo-file-system';
 const ApiContext = createContext(null);
 
 // Replace with your backend URL (or process.env.EXPO_PUBLIC_API_URL)
-const API_BASE_URL = 'https://preven-backend.vercel.app/api/v1';
+const API_BASE_URL = 'https://preven-backend.onrender.com/api/v1';
 
 export function ApiProvider({ children }) {
   const { getToken } = useAuth();

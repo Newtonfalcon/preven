@@ -35,16 +35,9 @@
       "@clerk/expo",
       "expo-secure-store",
       [
-        "expo-image-picker",
-        {
-          "cameraPermission": "Preven needs camera access so you can photograph a skin area for structured tracking.",
-          "photosPermission": "Preven needs photo library access so you can select an existing photo for structured tracking."
-        }
-      ],
-      [
         "expo-splash-screen",
         {
-          "backgroundColor": "#FFFFFF",
+          "backgroundColor": "#000000",
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 76
         }
